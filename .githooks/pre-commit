@@ -2,4 +2,15 @@
 set -eu
 
 repo_root=$(git rev-parse --show-toplevel)
-exec python3 "$repo_root/scripts/check_secrets.py"
+python3 "$repo_root/scripts/check_secrets.py"
+
+if [ -x "$repo_root/.tools/gitleaks" ]; then
+    scanner="$repo_root/.tools/gitleaks"
+elif command -v gitleaks >/dev/null 2>&1; then
+    scanner=gitleaks
+else
+    echo "Commit blocked: install Gitleaks (see README.md) before committing." >&2
+    exit 1
+fi
+
+exec "$scanner" git --pre-commit --staged --redact .

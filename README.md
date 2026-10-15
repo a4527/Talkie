@@ -10,10 +10,10 @@
 
 `.env`는 로컬 전용이며 Git에서 제외합니다. 현재 필요한 환경 변수는 정해지지 않았으므로 [`.env.example`](.env.example)에는 키나 공급자 설정을 넣지 않았습니다. 구현 과정에서 변수가 생기면 예시 파일에는 변수 이름과 안전한 예시값만 추가하고, 실제 값은 `.env`에 둡니다. 이미 Git에 올라간 비밀값은 `.gitignore`만으로 제거되지 않으므로 해당 값을 폐기·재발급하고 Git 기록도 별도로 처리해야 합니다.
 
-이 저장소의 커밋 전 검사 훅을 켭니다.
+이 저장소의 커밋 전 검사 훅을 켭니다. [Gitleaks](https://github.com/gitleaks/gitleaks#installing)는 별도로 설치하거나 실행 파일을 `.tools/gitleaks`에 둡니다. Gitleaks가 없으면 커밋을 중단합니다. 현재 로컬 환경에는 공식 v8.30.1 배포 파일을 체크섬 검증 후 `.tools/gitleaks`에 설치했습니다.
 
 ```sh
 git config --local core.hooksPath .githooks
 ```
 
-훅은 커밋 대상 파일의 이름과 내용에서 환경 파일, 개인 키, 알려진 API 토큰 형식, 자격 증명 대입값을 검사합니다. 수동 실행은 `python3 scripts/check_secrets.py`입니다. 커밋 전에 `git diff --cached --name-only`와 `git diff --cached`도 확인하세요. 패턴 검사는 모든 비밀값이나 보안 취약 코드를 식별하지 못하므로 코드와 설정의 접근 권한, 사용자 데이터 노출, 서버 측 비밀값 사용 여부도 함께 검토합니다.
+커밋 훅은 민감한 파일명과 스테이징된 비밀값을 검사합니다. push 훅은 추적 중인 민감 파일명과 Git 이력의 비밀값을 다시 검사합니다. GitHub에서도 push와 pull request마다 두 검사를 실행합니다. 전체 커밋 이력은 `gitleaks git --redact .`로 별도 검사할 수 있습니다. 커밋 전에 `git diff --cached --name-only`와 `git diff --cached`도 확인하세요. 검사 도구와 GitHub push protection은 모든 비밀값이나 보안 취약 코드를 식별하지 못하므로 코드와 설정의 접근 권한, 사용자 데이터 노출, 서버 측 비밀값 사용 여부도 함께 검토합니다.

@@ -6,6 +6,7 @@
 
 ### 추가
 
+- 커밋 전 내용 검사를 Gitleaks로 보강하고 GitHub push·pull request 비밀값 검사 워크플로를 추가했다.
 - 로컬 환경 변수 예시와 Git 제외 규칙, 커밋 전 비밀값 검사 훅을 추가했다.
 - 웹서비스의 제품 요구사항과 수용 기준을 [PRD.md](PRD.md)에 정리했다.
 - 작업 목록, 진행 현황, 에이전트 작업 규칙을 각각 [TASKS.md](TASKS.md), [PROGRESS.md](PROGRESS.md), [AGENTS.md](AGENTS.md)에 작성했다.
