@@ -4,6 +4,8 @@
 
 제품 요구사항은 [PRD.md](PRD.md), 작업별 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
 
+현재 구조·기술적 가정은 [design.md](design.md), 결정 상태·ADR은 [DECISIONS.md](DECISIONS.md), 측정·실험 방법은 [검증 설계](docs/design/engineering-validation.md)를 참고하세요.
+
 실행·설치 방법은 애플리케이션 코드가 추가될 때 이곳에 기록합니다.
 
 ## 로컬 환경 변수와 커밋 점검
