@@ -15,4 +15,4 @@
 
 ## 후속 상태 연결 (2026-10-21)
 
-작업 실행 방향은 후속 [ADR-028](028-durable-scheduled-work-list.md), 임시 원문 백업 제외는 [ADR-027](027-exclude-temporary-transcripts-from-backups.md), 공급자 정책은 [ADR-025](025-ephemeral-audio-and-provider-retention.md)로 구체화했다. 위 미정 목록은 당시 상태이며 실제 플랫폼·공급자 적합성·기한 준수는 검증 전이다.
+작업 실행 방향은 후속 [ADR-028](028-durable-scheduled-work-list.md), 임시 원문 백업 제외는 [DEC-027](../../DECISIONS.md#dec-027), 공급자 정책은 [ADR-025](025-ephemeral-audio-and-provider-retention.md)로 구체화했다. 위 미정 목록은 당시 상태이며 실제 플랫폼·공급자 적합성·기한 준수는 검증 전이다.

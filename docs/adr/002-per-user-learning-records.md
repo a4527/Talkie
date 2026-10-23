@@ -13,4 +13,4 @@
 
 ## 후속 상태 연결 (2026-10-21)
 
-현재 보관·탈퇴 범위는 [ADR-017](017-plan-based-learning-record-retention.md)~[ADR-021](021-scheduled-account-deletion-and-backup-deadlines.md), 임시 원문 백업 제외는 [ADR-027](027-exclude-temporary-transcripts-from-backups.md)을 따른다. 위 저장소·기간 미정 표현은 최초 결정 당시 상태다.
+현재 보관·탈퇴 범위는 [ADR-017](017-plan-based-learning-record-retention.md)~[ADR-021](021-scheduled-account-deletion-and-backup-deadlines.md), 임시 원문 백업 제외는 [DEC-027](../../DECISIONS.md#dec-027)을 따른다. 위 저장소·기간 미정 표현은 최초 결정 당시 상태다.

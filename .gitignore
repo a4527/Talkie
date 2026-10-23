@@ -32,12 +32,16 @@ __pycache__/
 dist/
 build/
 coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
 .next/
 .nuxt/
 .svelte-kit/
 .cache/
 
 # Local logs and editor files
+.local/
 *.log
 .DS_Store
 .idea/

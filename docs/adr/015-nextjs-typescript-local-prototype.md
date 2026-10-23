@@ -21,4 +21,4 @@
 
 ## 후속 상태 연결 (2026-10-21)
 
-후속 실제 기능 방향은 앱 직접 인증 [ADR-026](026-app-managed-email-link-authentication.md), 임시 원문 백업 제외 [ADR-027](027-exclude-temporary-transcripts-from-backups.md), 지속 작업 목록·정시 실행 [ADR-028](028-durable-scheduled-work-list.md)을 따른다. 후보·경로 검증 범위는 [ADR-029](029-compare-two-live-audio-candidates.md)·[ADR-030](030-validate-direct-voice-path-first.md)이며 B-00의 범위와 선행 조건은 늘리지 않는다. 구체 저장·실행·배포 플랫폼은 미채택이다.
+후속 실제 기능 방향은 앱 직접 인증 [ADR-026](026-app-managed-email-link-authentication.md), 임시 원문 백업 제외 [DEC-027](../../DECISIONS.md#dec-027), 지속 작업 목록·정시 실행 [ADR-028](028-durable-scheduled-work-list.md)을 따른다. 후보·경로 검증 범위는 [DEC-029](../../DECISIONS.md#dec-029)·[DEC-030](../../DECISIONS.md#dec-030)이며 B-00의 범위와 선행 조건은 늘리지 않는다. 구체 저장·실행·배포 플랫폼은 미채택이다.

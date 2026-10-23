@@ -20,4 +20,4 @@
 
 ## 후속 상태 연결 (2026-10-21)
 
-앱 인증·임시 원문 백업·작업 실행 방향은 [ADR-026](026-app-managed-email-link-authentication.md)·[ADR-027](027-exclude-temporary-transcripts-from-backups.md)·[ADR-028](028-durable-scheduled-work-list.md), 비교 후보·경로 범위는 [ADR-029](029-compare-two-live-audio-candidates.md)·[ADR-030](030-validate-direct-voice-path-first.md)으로 정했다. 위 관련 미정 표현은 당시 상태다. 후보의 실제 계약·가격·정책 충족과 최종 공급자·모델·경로는 미검증·미채택이다.
+앱 인증·임시 원문 백업·작업 실행 방향은 [ADR-026](026-app-managed-email-link-authentication.md)·[DEC-027](../../DECISIONS.md#dec-027)·[ADR-028](028-durable-scheduled-work-list.md), 비교 후보·경로 범위는 [DEC-029](../../DECISIONS.md#dec-029)·[DEC-030](../../DECISIONS.md#dec-030)으로 정했다. 위 관련 미정 표현은 당시 상태다. 후보의 실제 계약·가격·정책 충족과 최종 공급자·모델·경로는 미검증·미채택이다.
