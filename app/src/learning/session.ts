@@ -1,4 +1,5 @@
 import { validateNote } from "./note";
+import { boundRecords } from "./buffer";
 import type { Metric, NoteRequest, Provider, Request, Session, Turn } from "./types";
 
 export class LearningSession {
@@ -8,12 +9,26 @@ export class LearningSession {
   private completed = new Set<string>();
   private noteInFlight = false;
   private sequence = 0;
+  private acknowledged = new Set<string>();
 
-  constructor(private provider: Provider, private id = () => crypto.randomUUID(), private now = () => Date.now()) {
+  acknowledge(turns: Session["turns"]) {
+    for (const turn of turns) this.acknowledged.add(turn.requestId);
+    const live = new Set(this.state.turns.map(t => t.requestId));
+    this.acknowledged = new Set([...this.acknowledged].filter(id => live.has(id)));
+  }
+
+  constructor(private provider: Provider, private id = () => crypto.randomUUID(), private now = () => Date.now(),
+    private storage?: { id: string; turns: Session["turns"]; corrections: Session["corrections"]; learning: Session["learning"]; gaps?: boolean; maxBytes: number }) {
     this.state = {
       sessionId: this.id(), phase: "ready", learning: "conversation", turns: [], corrections: [],
       noteStatus: "idle", message: "", metrics: [],
     };
+    if (storage) {
+      this.state = { ...this.state, sessionId: storage.id, turns: storage.turns, corrections: storage.corrections,
+        learning: storage.learning, phase: storage.turns.length ? storage.learning : "ready", gaps: storage.gaps };
+      this.sequence = Math.max(0, ...storage.turns.map(t => Number(t.id.split("-t").at(-1)) || 0));
+      this.acknowledge(storage.turns);
+    }
   }
 
   getSnapshot = (): Session => this.state;
@@ -25,6 +40,11 @@ export class LearningSession {
   private update(patch: Partial<Session>, metric?: Metric) {
     this.state = { ...this.state, ...patch,
       metrics: metric ? [...this.state.metrics, metric].slice(-100) : this.state.metrics };
+    if (this.storage) {
+      const bounded = boundRecords(this.state.turns, this.state.corrections, this.storage.maxBytes);
+      if (bounded.dropped) this.state = { ...this.state, turns: bounded.turns, corrections: bounded.corrections,
+        gaps: this.state.gaps || bounded.removed.some(id => !this.acknowledged.has(id)) };
+    }
     this.listeners.forEach(listener => listener());
   }
 

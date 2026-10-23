@@ -1,4 +1,10 @@
 :root { --bg: #f6f5f0; --ink: #263e37; --muted: #6c7770; --green: #275c49; --line: #dde2d9; --paper: #fffefa; --accent: #d8ed85; }
+.account-shell { padding-top: 30px; padding-bottom: 40px; }
+.account-card { max-width: 640px; margin: 28px auto; display: grid; gap: 18px; }
+.account-card form { display: grid; gap: 12px; }
+.account-card input { font: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; width: 100%; }
+.account-card a { margin-right: 18px; }
+.save-status { margin-top: 18px; padding: 12px; background: var(--paper); border-radius: 8px; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: Arial, "Noto Sans KR", sans-serif; font-size: 15px; line-height: 1.7; }
 button, textarea, select { font: inherit; }

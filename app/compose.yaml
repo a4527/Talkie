@@ -1,0 +1,46 @@
+name: talkie-local
+services:
+  records:
+    image: postgres:16.15
+    environment:
+      POSTGRES_USER: talkie
+      POSTGRES_DB: talkie
+      POSTGRES_PASSWORD: ${TALKIE_RECORDS_PASSWORD:?Set a local records database password}
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["records:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talkie -d talkie"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: {driver: none}
+  transcripts:
+    image: postgres:16.15
+    environment:
+      POSTGRES_USER: talkie
+      POSTGRES_DB: talkie_transcripts
+      POSTGRES_PASSWORD: ${TALKIE_TRANSCRIPTS_PASSWORD:?Set a different local transcripts database password}
+    ports: ["127.0.0.1:5434:5432"]
+    volumes: ["transcripts-no-backup:/var/lib/postgresql/data"]
+    command: ["postgres", "-c", "archive_mode=off", "-c", "log_statement=none", "-c", "log_min_error_statement=panic", "-c", "log_error_verbosity=terse"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talkie -d talkie_transcripts"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: {driver: none}
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_DISABLE_VERSION_CHECK: "true"
+      MP_QUIET: "true"
+      MP_BLOCK_REMOTE_CSS_AND_FONTS: "true"
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+    tmpfs: ["/data:rw,noexec,nosuid,size=64m"]
+    logging: {driver: none}
+volumes:
+  records:
+  transcripts-no-backup:
+    labels:
+      talkie.backup: exclude

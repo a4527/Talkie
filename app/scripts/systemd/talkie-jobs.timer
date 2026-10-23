@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Talkie local maintenance every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+Unit=talkie-jobs.service
+
+[Install]
+WantedBy=timers.target

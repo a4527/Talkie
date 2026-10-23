@@ -10,22 +10,43 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run tests/learning.test.ts",
     "test:e2e": "playwright test --config tests/browser/playwright.config.ts",
-    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; for (const path of ['.next', 'test-results', 'playwright-report', 'tsconfig.tsbuildinfo']) rmSync(path, { recursive: true, force: true });\""
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; for (const path of ['.next', 'test-results', 'playwright-report', 'tsconfig.tsbuildinfo']) rmSync(path, { recursive: true, force: true });\"",
+    "db:generate": "drizzle-kit generate --config drizzle.records.config.ts && drizzle-kit generate --config drizzle.transcripts.config.ts",
+    "db:migrate": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/database.ts migrate",
+    "jobs": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/database.ts jobs",
+    "db:invalidate-restored-auth": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/database.ts invalidate-restored-auth",
+    "local:up": "docker compose up -d --wait",
+    "local:down": "docker compose down",
+    "test:server": "node --conditions=react-server --env-file-if-exists=.env --import tsx --test tests/server.test.ts",
+    "local:configure": "node --import tsx scripts/configure-local.ts"
   },
   "engines": {
     "node": ">=22.12"
   },
   "dependencies": {
+    "drizzle-orm": "0.45.4",
     "next": "16.4.2",
+    "nodemailer": "10.2.1",
+    "pg": "8.23.1",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
     "@types/node": "26.6.5",
+    "@types/nodemailer": "8.0.2",
+    "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "drizzle-kit": "0.31.11",
+    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.25.12"
+    }
   }
 }

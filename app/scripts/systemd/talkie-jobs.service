@@ -1,0 +1,12 @@
+[Unit]
+Description=Talkie local scheduled maintenance
+
+[Service]
+Type=oneshot
+# Replace both paths with your checkout path and `command -v node` result before installation.
+WorkingDirectory=/home/taemin/Talkie/app
+ExecStart=/usr/bin/env node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/database.ts jobs
+TimeoutStartSec=50
+StandardOutput=null
+StandardError=null
+UMask=0077

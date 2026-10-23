@@ -71,6 +71,7 @@ export interface Metric {
 }
 
 export interface Session {
+  gaps?: boolean;
   sessionId: string;
   phase: Phase;
   learning: LearningState;
