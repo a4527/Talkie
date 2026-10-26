@@ -19,7 +19,7 @@
 | `DEC-020` | 이메일 링크 로그인·마지막 이용 후 30일 유지·로그인 링크 10분 | Accepted | [ADR-020](docs/adr/020-email-link-login-and-session-retention.md) | DEC-014의 로그인 방식·DEC-019의 탈퇴 본인 확인 구체화, 링크 일회성 후속 합의 포함 |
 | `DEC-021` | 탈퇴 즉시 차단·24시간 이내 일괄 삭제·백업 7일 이내 삭제 | Accepted | [ADR-021](docs/adr/021-scheduled-account-deletion-and-backup-deadlines.md) | DEC-019·DEC-020의 탈퇴 처리·백업 기한 구체화 |
 | `DEC-024` | 외부 환경 중단 후 24시간 자동 종료·노트 생성 | Accepted | [ADR-024](docs/adr/024-auto-close-interrupted-session-after-one-day.md) | DEC-003의 절대적 명시 종료 규칙에 예외 추가, DEC-010의 종료 실행 범위 구체화 |
-| `DEC-025` | 앱의 휘발성 음성 처리·공급자 모델 학습 금지·최대 30일 보관 | Accepted | [ADR-025](docs/adr/025-ephemeral-audio-and-provider-retention.md) | DEC-008·DEC-016의 음성 처리·공급자 조건 구체화 |
+| `DEC-025` | 앱의 휘발성 음성 처리·공급자 모델 학습 금지·최대 30일 보관 | Accepted | [ADR-025](docs/adr/025-ephemeral-audio-and-provider-retention.md) | DEC-008·DEC-016의 음성 처리·공급자 조건 구체화. 실험 한정 유예는 DEC-052 |
 | `DEC-026` | 앱 직접 관리 이메일 링크·세션 인증 | Accepted | [ADR-026](docs/adr/026-app-managed-email-link-authentication.md) | DEC-020의 인증 구현 책임 구체화 |
 | `DEC-028` | 지속 작업 목록과 정시 실행 | Accepted | [ADR-028](docs/adr/028-durable-scheduled-work-list.md) | DEC-012/021/024의 작업 실행 방식 구체화 |
 | `DEC-031` | 저장 실패 누적 재시도·즉시 재개·비동기 부분 노트 | Accepted | [ADR-031](docs/adr/031-save-retries-and-note-outcomes.md) | DEC-012/013/024/028의 미정 동작 구체화 |
@@ -110,7 +110,7 @@
 
 ### DEC-029 · 첫 실시간 음성 후보 두 곳 비교
 
-2026-10-21 · Accepted — OpenAI Realtime과 Gemini Live를 동일한 핵심 사례로 소규모 비교한다. 한 후보만으로 확정하기 전 비교 근거를 얻으며 최종 공급자·모델 채택은 아니다(DEC-016 구체화).
+2026-10-21 · Accepted — OpenAI Realtime과 Gemini Live를 동일한 핵심 사례로 소규모 비교한다. 한 후보만으로 확정하기 전 비교 근거를 얻으며 최종 공급자·모델 채택은 아니다(DEC-016 구체화). 후보 구성은 DEC-050이 갱신했다.
 
 <a id="dec-030"></a>
 
@@ -189,6 +189,36 @@
 ### DEC-048 · 원문 삭제 기한 명명과 생성·삭제 이력
 
 2026-10-24 · Accepted — 사용자가 삭제 기한 표현 변경과 원문 DB의 실제 생성·삭제 시각/사유 확인을 요청했다. 기한을 `transcript_delete_deadline_at`으로 명명하고 내용 없는 이력을 원문 DB에 남겨 저장·삭제를 구분한다. 기존 원문 보관 상한·백업 제외·탈퇴 삭제는 유지하며 상세 필드와 과거 시각의 미확인 처리는 design을 따른다.
+
+<a id="dec-050"></a>
+
+### DEC-050 · 실시간 음성 후보 구성 갱신
+
+2026-10-26 · Accepted — 사용자가 [후보 평가 계획 초안](docs/proposals/ai-candidate-evaluation-plan.md)의 후보 변경을 승인했다. 실시간 음성 후보를 OpenAI Realtime·Gemini Live·AWS 분리형(Transcribe·Bedrock 텍스트 모델·Polly) 세 구성으로 비교한다. Bedrock Nova 2 Sonic은 공식 언어 표에 한국어가 없어 제외하고 사용자 구독 연결은 PRD 10절대로 범위 밖이다. DEC-025를 충족하지 못한 후보에는 음성을 보내지 않으며 Gemini Developer API는 공식 정책의 로그 55일로 현재 미충족이다. 예산 배분·표본 수·월 한도·구독료는 확정하지 않았고 구독료 1만~2만 원은 사용자 가정이다(DEC-029 후보 구성 갱신). 후보 구성은 DEC-053이 다시 갱신했다.
+
+<a id="dec-051"></a>
+
+### DEC-051 · 서비스 대상 연령 만 18세 이상
+
+2026-10-26 · Accepted — 사용자가 대상 연령 A안에 동의해 서비스를 만 18세 이상으로 한정한다. Gemini 약관의 18세 미만 접근 가능 서비스 금지와 OpenAI의 아동 개인정보·연령 확인 요구를 피하고 법적·구현 부담을 줄이는 선택이며 청소년 사용자는 받지 않는다. 가입 시 연령 확인 방식·법률 검토·AWS 서비스 약관과 OpenAI Business Terms 원문 확인은 남는다(DEC-014 공개 가입 범위 구체화, 근거는 [후보 평가 계획 초안](docs/proposals/ai-candidate-evaluation-plan.md)).
+
+<a id="dec-052"></a>
+
+### DEC-052 · 후보 음성 시험 범위와 보관 상한 완화 조건
+
+2026-10-26 · Accepted — 사용자가 스모크에서 OpenAI Realtime·Gemini Live·AWS 분리형을 모두 시험하기로 했다. 보관 일수를 아직 확인하지 못한 후보는 합성 대화·개발자 본인 음성(DEC-016)에 한해 학습 금지(유료 티어·옵트아웃·데이터 공유 미사용)를 확인한 경우에만 시험하도록 DEC-025의 음성 전달 금지를 유예한다. 실제 사용자 음성에는 DEC-025를 그대로 적용한다. OpenAI 비용이 과도하면 보관 상한 완화를 논의하기로 했으나 완화 한도·비용 기준·사용자 고지는 미정이며 상한 변경은 채택하지 않았다(DEC-025 구체화, DEC-050 후속).
+
+<a id="dec-053"></a>
+
+### DEC-053 · 저가형 분리형 추가와 저렴한 순 시험
+
+2026-10-26 · Accepted — 사용자가 AWS 분리형을 후보에서 제외하고 저가형 분리형(음성 인식·텍스트 모델·음성 합성을 저비용 서비스로 조합)을 추가했다. 스모크는 비용이 낮은 순서(저가형 분리형 → Gemini Live → OpenAI Realtime)로 진행하며 저렴한 후보가 성능 기준을 충족하면 더 비싼 후보를 쓸 이유가 없다는 판단이다. 구성 모델·성능 기준·예산 배분은 미정이다. DEC-052의 학습 금지 확인 전제와 합성·본인 음성 한정은 유지한다(DEC-050 구체화, 근거는 [후보 평가 계획 초안](docs/proposals/ai-candidate-evaluation-plan.md)). 시험 범위는 DEC-054가 구체화했다.
+
+<a id="dec-054"></a>
+
+### DEC-054 · 구성 요소별 교체 시험과 직접 청취 평가
+
+2026-10-26 · Accepted — 사용자가 저가형 분리형을 음성 인식·텍스트 모델·음성 합성 각 2~3개 후보로 두고 한 요소씩 바꿔 시험하기로 했다. 성능 기준은 사전에 수치로 정하지 않고 사용자가 직접 말하고 들으며 정한다. Gemini Live와 OpenAI Realtime도 각각 한 번 이상 시험하고 모든 시험 뒤 최종 결정한다. 저렴한 후보가 충족하면 상위 후보 시험을 생략할 수 있다는 DEC-053의 전제는 이 결정으로 대체하고, 시험 순서는 비용이 낮은 순서를 유지한다. 후보 모델 확정과 예산 배분은 계획 초안의 제안이며 미승인이다. DEC-052의 학습 금지 확인 전제와 합성·본인 음성 한정은 유지한다(DEC-053 구체화).
 
 ## 기록·변경 규칙
 

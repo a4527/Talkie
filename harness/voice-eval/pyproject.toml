@@ -1,0 +1,18 @@
+[project]
+name = "talkie-voice-eval"
+version = "0.1.0"
+description = "Talkie 음성 후보 비교 시험 하니스 (제품 코드와 분리)"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pipecat-ai[anthropic,cartesia,deepgram,google,openai,runner,silero,soniox,webrtc]>=1.14.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

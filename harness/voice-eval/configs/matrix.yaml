@@ -1,0 +1,70 @@
+# 시험 구성 매트릭스 (DEC-054). 한 번에 한 요소만 바꿔 원인을 분리한다.
+# order는 비용이 낮은 순서다. 구성 요소 정의를 바꾸면 pricing.py의 단가표도 확인한다.
+
+limits:
+  session_seconds: 180          # 구성당 한 세션의 최대 길이 (비용 예약 계산 기준)
+  round_cap_krw: 5000           # 1라운드 지출 상한 (제안값, 미승인)
+  total_cap_krw: 30000          # DEC-016 최초 후보 비교 총 상한
+  krw_per_usd: 1400             # 환율 가정
+  safety_factor: 1.25           # 예약 비용에 곱하는 안전 계수
+
+baseline: baseline
+
+order:
+  - baseline
+  - stt-deepgram
+  - stt-openai
+  - llm-gemini
+  - llm-openai
+  - tts-cartesia
+  - tts-openai
+  - ref-gemini-live
+  - ref-openai-realtime
+
+configs:
+  baseline:
+    kind: cascade
+    description: Soniox + Claude Haiku 5.5 + Gemini TTS (기본 조합)
+    stt: {provider: soniox}
+    llm: {provider: anthropic, model: claude-haiku-5-5}
+    tts: {provider: gemini, model: gemini-3.8-flash-lite-tts, voice: Kore}
+
+  stt-deepgram:
+    base: baseline
+    description: 음성 인식만 Deepgram Nova-3로 교체
+    stt: {provider: deepgram, model: nova-3, language: multi}
+
+  stt-openai:
+    base: baseline
+    description: 음성 인식만 OpenAI 전사로 교체
+    stt: {provider: openai, model: gpt-4o-transcribe}
+
+  llm-gemini:
+    base: baseline
+    description: 텍스트 모델만 Gemini 3.5 Flash-Lite로 교체
+    llm: {provider: google, model: gemini-3.5-flash-lite}
+
+  llm-openai:
+    base: baseline
+    description: 텍스트 모델만 OpenAI gpt-6-luna로 교체
+    llm: {provider: openai, model: gpt-6-luna}
+
+  tts-cartesia:
+    base: baseline
+    description: 음성 합성만 Cartesia Sonic으로 교체
+    tts: {provider: cartesia}
+
+  tts-openai:
+    base: baseline
+    description: 음성 합성만 OpenAI gpt-4o-mini-tts로 교체
+    tts: {provider: openai, model: gpt-4o-mini-tts, voice: alloy}
+
+  ref-gemini-live:
+    kind: realtime
+    description: 참조 - Gemini Live (한 번씩 시험)
+    realtime: {provider: gemini_live, model: gemini-3.8-live, voice: Kore}
+
+  ref-openai-realtime:
+    kind: realtime
+    description: 참조 - OpenAI Realtime (한 번씩 시험)
+    realtime: {provider: openai_realtime, model: gpt-realtime-2.1}

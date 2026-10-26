@@ -105,6 +105,10 @@ ORDER BY transcript_storage_created_at DESC NULLS LAST;
 
 기존 원문의 알 수 없는 과거 시각은 NULL이며 변경 전에 이미 삭제된 원문은 이력도 복원할 수 없다. 상태에는 대화 내용을 남기지 않고 탈퇴/고아 정리 때 함께 삭제한다. 새 이관은 기존 저장 순번·해시·snapshot·확정 위치·탈퇴 권한을 보존한다.
 
+## AI 후보 시험 하니스
+
+음성 인식·텍스트 모델·음성 합성 후보를 직접 말하고 들어 비교하는 시험 전용 도구는 제품 코드와 분리해 `harness/voice-eval/`에 있습니다. 설치와 실행은 [하니스 README](harness/voice-eval/README.md), 공급자별 키 발급·결제·환경변수는 [PROVIDERS.md](harness/voice-eval/PROVIDERS.md)를 따릅니다. 합성 대화와 본인 음성만 사용하며 실제 사용자 데이터는 넣지 않습니다.
+
 ## 로컬 환경 변수와 커밋 점검
 
 `.env`는 로컬 전용이며 Git에서 제외합니다. 인증·저장 앱의 변수 이름과 안전한 예시는 [app/.env.example](app/.env.example)을 따르며 실제 값은 Git 제외한 `app/.env`에 둡니다. 루트 [`.env.example`](.env.example)은 기존 공통 예시입니다. 구현 과정에서 변수가 생기면 예시 파일에는 변수 이름과 안전한 예시값만 추가하고, 실제 값은 `.env`에 둡니다. 이미 Git에 올라간 비밀값은 `.gitignore`만으로 제거되지 않으므로 해당 값을 폐기·재발급하고 Git 기록도 별도로 처리해야 합니다.
