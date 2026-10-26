@@ -22,7 +22,7 @@ export default function Account() {
       {current ? <><p>{current} 계정으로 로그인했습니다.</p><a className="primary" href="/learn">학습·기록 보기</a>
         <button className="secondary" disabled={busy} onClick={() => void act("logout")}>로그아웃</button>
         <details><summary>회원 탈퇴</summary><p>이메일로 본인 확인 후 10분 안에 탈퇴를 확정할 수 있습니다.</p>
-          <button className="secondary" disabled={busy} onClick={() => void act("request", "delete")}>탈퇴 확인 메일 요청</button>
+          <button className="secondary" disabled={busy} onClick={() => void act("request", "account_deletion")}>탈퇴 확인 메일 요청</button>
           <button className="secondary" disabled={busy} onClick={() => void act("delete")}>회원 탈퇴 확정</button></details>
       </> : <form onSubmit={e => { e.preventDefault(); void act("request", "login"); }}>
         <label htmlFor="email">이메일 주소</label><input id="email" type="email" required maxLength={254} placeholder="learner@example.test" value={email} onChange={e => setEmail(e.target.value)} />

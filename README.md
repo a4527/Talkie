@@ -80,6 +80,31 @@ TALKIE_STORAGE_E2E=1 APP_ORIGIN=http://127.0.0.1:3100 npm run test:e2e -- storag
 
 브라우저 시험은 실행 중인 두 시험 DB·SMTP가 필요합니다. Mailpit API 기본값은 `http://127.0.0.1:18025`이며 Compose를 쓰면 `MAILPIT_TEST_ORIGIN=http://127.0.0.1:8025`로 지정합니다. 단위 테스트는 `npm test`, 변경 SQL 생성은 `npm run db:generate`입니다. 생성 SQL을 검토한 뒤 적용하며 앱 요청/개발 서버 시작 때 스키마를 자동 변경하지 않습니다.
 
+## DB에서 원문 생성·삭제 확인
+
+스키마 변경 후 개발 서버·작업 실행기를 멈추고 `app/`에서 `npm run db:migrate`를 실행한 뒤 다시 시작한다. 이관은 각 DB별 트랜잭션이며 두 DB를 한 번에 커밋하지 않는다. 한쪽 실패 시 앱을 재개하지 말고 원인을 해결한 뒤 같은 명령으로 나머지 이관을 완료한다. DBeaver에서 연결을 새로고침한다. 기존 소유자 불일치·중복 작업·원문/이력 충돌은 이관을 실패시키며 임의 수정하지 않는다.
+
+DEC-049의 현재 스키마는 지속 DB 7개(`users`, `email_auth_rate_limits`, `email_auth_requests`, `login_sessions`, `learning_sessions`, `learning_session_notes`, `scheduled_jobs`)와 임시 DB 2개(`transcript_session_states`, `transcript_saves`)다. 탈퇴 이메일 재확인은 유지하고 최종 허용 기한/사용 시각을 로그인 행에 저장한다. 계정 생성은 `account_created_at`, 탈퇴 확정은 `account_deletion_confirmed_at`이다.
+
+지속 DB(5433)의 `learning_sessions.confirmed_save_sequence_number`는 저장 성공을 확정한 마지막 순번, `transcript_delete_deadline_at`은 원문 삭제 기한이다. 원문 DB(5434)의 `transcript_saves`에는 저장 순번별 `conversation_snapshot`과 재전송 확인용 `snapshot_hash`가 있다. 같은 대화가 여러 저장에 포함될 수 있으며 원문 복원은 확정 순번까지만 합친다. 종료 후 노트 저장 성공 또는 기한 만료로 원문 저장 행을 삭제한다.
+
+원문이 사라진 뒤에도 상태 행에서 생성·삭제 사실을 확인할 수 있다.
+
+```sql
+SELECT learning_session_id, transcript_storage_created_at, first_nonempty_save_at,
+       transcript_delete_deadline_at, source_deleted_at, source_deletion_reason
+FROM transcript_session_states
+ORDER BY transcript_storage_created_at DESC NULLS LAST;
+```
+
+- `transcript_storage_created_at`: 빈 원문 저장소 생성 시각.
+- `first_nonempty_save_at`: 발화가 있는 데이터의 첫 임시 DB 저장 시각. 신규 행의 NULL은 아직 발화 저장이 없다는 뜻이며 지속 DB 저장 확정과는 구분한다.
+- `transcript_delete_deadline_at`: 마지막 저장 때 복사한 기한. 지속 DB의 최초 종료 기한이 기준이며 이 보조값만으로 독립 삭제를 보장하지 않는다.
+- `source_deleted_at`: 원문 저장 행의 실제 SQL 삭제 완료 시각. 삭제된 상태 행은 남아 있어도 이후 저장을 거절한다.
+- `source_deletion_reason`: `note_saved`(노트 저장), `no_user_turns`(사용자 발화 없음), `deadline_expired`(기한 만료).
+
+기존 원문의 알 수 없는 과거 시각은 NULL이며 변경 전에 이미 삭제된 원문은 이력도 복원할 수 없다. 상태에는 대화 내용을 남기지 않고 탈퇴/고아 정리 때 함께 삭제한다. 새 이관은 기존 저장 순번·해시·snapshot·확정 위치·탈퇴 권한을 보존한다.
+
 ## 로컬 환경 변수와 커밋 점검
 
 `.env`는 로컬 전용이며 Git에서 제외합니다. 인증·저장 앱의 변수 이름과 안전한 예시는 [app/.env.example](app/.env.example)을 따르며 실제 값은 Git 제외한 `app/.env`에 둡니다. 루트 [`.env.example`](.env.example)은 기존 공통 예시입니다. 구현 과정에서 변수가 생기면 예시 파일에는 변수 이름과 안전한 예시값만 추가하고, 실제 값은 `.env`에 둡니다. 이미 Git에 올라간 비밀값은 `.gitignore`만으로 제거되지 않으므로 해당 값을 폐기·재발급하고 Git 기록도 별도로 처리해야 합니다.

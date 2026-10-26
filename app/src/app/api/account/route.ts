@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     const data = await body(request), secret = request.cookies.get(COOKIE)?.value;
     switch (data.action) {
       case "request":
-        if (data.purpose !== "login" && data.purpose !== "delete") throw new AppError("INVALID_REQUEST");
+        if (data.purpose !== "login" && data.purpose !== "account_deletion") throw new AppError("INVALID_REQUEST");
         await requestLink(data.email, data.purpose, secret);
         return response({ accepted: true });
       case "inspect": return response(await inspectLink(string(data.token)));

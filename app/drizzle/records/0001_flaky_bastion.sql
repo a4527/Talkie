@@ -1,0 +1,1 @@
+ALTER TABLE "learning_sessions" RENAME COLUMN "erase_at" TO "transcript_delete_deadline_at";

@@ -28,6 +28,7 @@
 | `DEC-034` | 별도 PostgreSQL 인스턴스·볼륨의 임시 원문 저장·백업 제외 | Accepted | [ADR-034](docs/adr/034-isolated-postgresql-temporary-transcripts.md) | DEC-027의 미정 저장 방식 구체화 |
 | `DEC-046` | 이메일 인증 브라우저·수명·백업 복원 후 무효화 | Accepted | [ADR-046](docs/adr/046-email-authentication-lifecycle-and-restore.md) | DEC-020/026/035/036의 미정 사용성·수명/복원 계약 구체화 |
 | `DEC-047` | 미저장 버퍼 상한에서 최근 완결 기록 우선 | Accepted | [ADR-047](docs/adr/047-retain-recent-unsaved-records-at-buffer-limit.md) | DEC-031/040의 상한 도달 시 기록 유지/포기 미정 계약 구체화 |
+| <a id="dec-049"></a>`DEC-049` | DB 명명과 로그인·원문 상태 통합 | Accepted | [ADR-049](docs/adr/049-clear-database-names-and-merged-session-state.md) | DEC-020/034/035/036/046/048의 사용자·데이터 경계를 유지하고 저장 구조 구체화 |
 
 ## 짧은 결정
 
@@ -182,6 +183,12 @@
 ### DEC-045 · Drizzle ORM과 Drizzle Kit
 
 2026-10-23 · Accepted — 사용자가 Drizzle ORM 채택에 동의했다. 타입·스키마/마이그레이션 도구의 도움과 SQL 직접 제어를 함께 얻기 위한 선택이며, Drizzle Kit 생성 SQL을 검토·버전 관리하고 필요한 매개변수화 SQL을 허용한다. 구체 버전·인증/동시성·실패/복원 검증은 남는다.
+
+<a id="dec-048"></a>
+
+### DEC-048 · 원문 삭제 기한 명명과 생성·삭제 이력
+
+2026-10-24 · Accepted — 사용자가 삭제 기한 표현 변경과 원문 DB의 실제 생성·삭제 시각/사유 확인을 요청했다. 기한을 `transcript_delete_deadline_at`으로 명명하고 내용 없는 이력을 원문 DB에 남겨 저장·삭제를 구분한다. 기존 원문 보관 상한·백업 제외·탈퇴 삭제는 유지하며 상세 필드와 과거 시각의 미확인 처리는 design을 따른다.
 
 ## 기록·변경 규칙
 

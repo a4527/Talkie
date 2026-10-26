@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     const id = string(data.id);
     if (data.action === "note") { await finishNote(raw, id); return response({ ok: true }, raw); }
     const secret = string(data.connection);
-    if (data.action === "save") return response(await saveLearning(raw, id, secret, Number(data.version), data.snapshot), raw);
+    if (data.action === "save") return response(await saveLearning(raw, id, secret, Number(data.saveSequenceNumber), data.conversationSnapshot), raw);
     if (data.action === "end") return response(await endLearning(raw, id, secret), raw);
     if (data.action === "heartbeat" || data.action === "pause") {
       await heartbeat(raw, id, secret, data.action === "pause");

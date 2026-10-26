@@ -12,15 +12,15 @@ async function api(data: Record<string, unknown>) {
   if (!res.ok) throw new Error(result.error);
   return result;
 }
-type Runtime = { session: LearningSession; provider: FakeProvider; id: string; secret: string; version: number };
+type Runtime = { session: LearningSession; provider: FakeProvider; id: string; secret: string; confirmedSaveSequenceNumber: number };
 type Records = { email: string; notes: { date: string; markdown: string }[]; sessions: { id: string; status: string; noteStatus: string }[] };
 
 function StoredConversation({ value, onReset, onSaved }: { value: Runtime; onReset: () => void; onSaved: () => void }) {
   const [status, setStatus] = useState("저장 준비 중");
   const latest = useRef<Session>(value.session.getSnapshot());
   const stopped = useRef(false);
-  const version = useRef(value.version);
-  const pending = useRef<{ version: number; snapshot: { turns: Session["turns"]; corrections: Session["corrections"]; learning: Session["learning"]; gaps: boolean }; key: string } | undefined>(undefined);
+  const saveSequenceNumber = useRef(value.confirmedSaveSequenceNumber);
+  const pending = useRef<{ saveSequenceNumber: number; conversationSnapshot: { turns: Session["turns"]; corrections: Session["corrections"]; learning: Session["learning"]; gaps: boolean }; key: string } | undefined>(undefined);
   const savedKey = useRef("");
   const ended = useRef(false);
   const running = useRef(false);
@@ -33,12 +33,12 @@ function StoredConversation({ value, onReset, onSaved }: { value: Runtime; onRes
       if (state.phase === "ended" && !ended.current) { await api({ action: "end", ...base }); ended.current = true; }
       const record = { turns: state.turns, corrections: state.corrections, learning: state.learning, gaps: state.gaps === true };
       const key = JSON.stringify(record);
-      if (!pending.current && key !== savedKey.current) pending.current = { version: version.current + 1, snapshot: record, key };
+      if (!pending.current && key !== savedKey.current) pending.current = { saveSequenceNumber: saveSequenceNumber.current + 1, conversationSnapshot: record, key };
       if (pending.current) {
-        const batch = pending.current;
-        await api({ action: "save", ...base, version: batch.version, snapshot: batch.snapshot });
-        value.session.acknowledge(batch.snapshot.turns);
-        version.current = batch.version; savedKey.current = batch.key; pending.current = undefined;
+        const save = pending.current;
+        await api({ action: "save", ...base, saveSequenceNumber: save.saveSequenceNumber, conversationSnapshot: save.conversationSnapshot });
+        value.session.acknowledge(save.conversationSnapshot.turns);
+        saveSequenceNumber.current = save.saveSequenceNumber; savedKey.current = save.key; pending.current = undefined;
       }
       setStatus(state.gaps ? "저장 완료 · 일부 대화 기록 누락" : "저장 완료");
       if (state.phase === "ended" && savedKey.current === key && !pending.current) {
@@ -81,9 +81,9 @@ export default function Learn() {
     setBusy(true); setStatus("");
     try {
       const result = await api({ action: "start", scenario: "correction" });
-      const provider = new FakeProvider(result.scenario as Scenario);
-      const session = new LearningSession(provider, undefined, undefined, { id: result.id, ...result.snapshot, maxBytes: 128 * 1024 });
-      setRuntime({ session, provider, id: result.id, secret: result.secret, version: result.version });
+      const provider = new FakeProvider(result.demoScenario as Scenario);
+      const session = new LearningSession(provider, undefined, undefined, { id: result.id, ...result.conversationSnapshot, maxBytes: 128 * 1024 });
+      setRuntime({ session, provider, id: result.id, secret: result.secret, confirmedSaveSequenceNumber: result.confirmedSaveSequenceNumber });
       if (session.getSnapshot().phase === "ready") session.start();
     } catch (error) { setStatus(messages[(error as Error).message] ?? "학습을 시작할 수 없습니다."); }
     finally { setBusy(false); }

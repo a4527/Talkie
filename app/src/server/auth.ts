@@ -4,7 +4,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import nodemailer from "nodemailer";
 import { AppError, config, emailKey } from "./config";
 import { databases, type Transaction } from "./db";
-import { authSessions, challenges, controls, deletionConfirmations, jobs, users } from "./db/schema";
+import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, users } from "./db/schema";
 
 export const DAY = 86_400_000;
 export const token = () => randomBytes(32).toString("base64url");
@@ -17,24 +17,25 @@ export async function dbNow(tx: Transaction): Promise<Date> {
   const result = await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`);
   return new Date(result.rows[0].now);
 }
-export type Identity = { userId: string; email: string; sessionId: string; expiresAt: Date };
+export type Identity = { userId: string; email: string; loginSessionId: string; expiresAt: Date };
 export async function identity(tx: Transaction, raw: string | undefined, renew = true): Promise<Identity> {
   if (!raw || !/^[A-Za-z0-9_-]{43}$/.test(raw)) throw new AppError("LOGIN_REQUIRED", 401);
-  const [hint] = await tx.select().from(authSessions).where(eq(authSessions.tokenHash, digest(raw)));
+  const [hint] = await tx.select().from(loginSessions).where(eq(loginSessions.loginTokenHash, digest(raw)));
   if (!hint) throw new AppError("LOGIN_REQUIRED", 401);
-  const [user] = await tx.select().from(users).where(eq(users.id, hint.userId)).for("update");
-  const [session] = await tx.select().from(authSessions).where(eq(authSessions.id, hint.id)).for("update");
+  const [user] = await tx.select().from(users).where(eq(users.userId, hint.userId)).for("update");
+  const [session] = await tx.select().from(loginSessions).where(eq(loginSessions.loginSessionId, hint.loginSessionId)).for("update");
   const now = await dbNow(tx);
-  if (!user || user.deletedAt || !session || session.revokedAt || session.expiresAt <= now) throw new AppError("LOGIN_REQUIRED", 401);
-  const expiresAt = renew ? new Date(now.getTime() + 30 * DAY) : session.expiresAt;
-  if (renew) await tx.update(authSessions).set({ lastSeenAt: now, expiresAt }).where(eq(authSessions.id, session.id));
-  return { userId: user.id, email: user.email, sessionId: session.id, expiresAt };
+  if (!user || user.accountDeletionConfirmedAt || !session || session.loginSessionInvalidatedAt || session.loginSessionExpiresAt <= now) throw new AppError("LOGIN_REQUIRED", 401);
+  const expiresAt = renew ? new Date(now.getTime() + 30 * DAY) : session.loginSessionExpiresAt;
+  if (renew) await tx.update(loginSessions).set({ lastAuthenticatedActivityAt: now, loginSessionExpiresAt: expiresAt }).where(eq(loginSessions.loginSessionId, session.loginSessionId));
+  return { userId: user.userId, email: user.emailAddress, loginSessionId: session.loginSessionId, expiresAt };
 }
 export async function withIdentity<T>(raw: string | undefined, work: (tx: Transaction, who: Identity) => Promise<T>) {
   return databases().records.transaction(async tx => work(tx, await identity(tx, raw)));
 }
 
-export type Mail = { to: string; url: string; purpose: string };
+export type AuthenticationPurpose = "login" | "account_deletion";
+export type Mail = { to: string; url: string; purpose: AuthenticationPurpose };
 export async function sendLocalMail(mail: Mail) {
   const cfg = config();
   emailKey(mail.to);
@@ -47,83 +48,80 @@ export async function sendLocalMail(mail: Mail) {
   } finally { transport.close(); }
 }
 
-export async function requestLink(input: unknown, purpose: "login" | "delete", rawSession?: string,
+export async function requestLink(input: unknown, purpose: AuthenticationPurpose, rawSession?: string,
   send: (mail: Mail) => Promise<void> = sendLocalMail) {
-  const email = emailKey(input);
-  const raw = token();
+  const email = emailKey(input), raw = token();
   const request = await databases().records.transaction(async tx => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${email}, 0))`);
     const now = await dbNow(tx);
-    const [control] = await tx.select().from(controls).where(eq(controls.email, email));
-    if (control && now.getTime() - control.requestedAt.getTime() < 30_000) throw new AppError("WAIT_30_SECONDS", 429);
-    let sessionId: string | null = null;
-    if (purpose === "delete") {
+    const [control] = await tx.select().from(emailAuthRateLimits).where(eq(emailAuthRateLimits.emailAddress, email));
+    if (control && now.getTime() - control.lastAuthEmailRequestedAt.getTime() < 30_000) throw new AppError("WAIT_30_SECONDS", 429);
+    let requestingLoginSessionId: string | null = null;
+    if (purpose === "account_deletion") {
       const who = await identity(tx, rawSession);
       if (who.email !== email) throw new AppError("LOGIN_REQUIRED", 401);
-      sessionId = who.sessionId;
+      requestingLoginSessionId = who.loginSessionId;
     }
-    const [user] = await tx.select().from(users).where(eq(users.email, email)).for("update");
-    await tx.insert(controls).values({ email, requestedAt: now }).onConflictDoUpdate({ target: controls.email, set: { requestedAt: now } });
-    await tx.update(challenges).set({ revokedAt: now }).where(and(eq(challenges.email, email), eq(challenges.purpose, purpose), isNull(challenges.revokedAt), isNull(challenges.consumedAt)));
-    if (user?.deletedAt) return undefined; // Same public request response; no account enumeration.
-    const [challenge] = await tx.insert(challenges).values({ email, purpose, sessionId,
-      tokenHash: digest(raw), createdAt: now, expiresAt: new Date(now.getTime() + 600_000) }).returning();
-    return challenge;
+    const [user] = await tx.select().from(users).where(eq(users.emailAddress, email)).for("update");
+    await tx.insert(emailAuthRateLimits).values({ emailAddress: email, lastAuthEmailRequestedAt: now })
+      .onConflictDoUpdate({ target: emailAuthRateLimits.emailAddress, set: { lastAuthEmailRequestedAt: now } });
+    await tx.update(emailAuthRequests).set({ authLinkInvalidatedAt: now }).where(and(eq(emailAuthRequests.emailAddress, email), eq(emailAuthRequests.authenticationPurpose, purpose), isNull(emailAuthRequests.authLinkInvalidatedAt), isNull(emailAuthRequests.authLinkUsedAt)));
+    if (user?.accountDeletionConfirmedAt) return undefined;
+    const [request] = await tx.insert(emailAuthRequests).values({ emailAddress: email, authenticationPurpose: purpose, requestingLoginSessionId,
+      authLinkTokenHash: digest(raw), authLinkIssuedAt: now, authLinkExpiresAt: new Date(now.getTime() + 600_000) }).returning();
+    return request;
   });
   if (!request) return;
-  let delivery = "accepted";
-  try {
-    await send({ to: email, purpose, url: `${config().origin}/account/confirm#${raw}` });
-  } catch { delivery = "failed_or_unknown"; }
-  // SMTP and SQL are separate: never retry mail or pretend SMTP acceptance means inbox arrival.
-  await databases().records.update(challenges).set({ delivery }).where(eq(challenges.id, request.id));
+  let emailSendStatus = "smtp_accepted";
+  try { await send({ to: email, purpose, url: `${config().origin}/account/confirm#${raw}` }); }
+  catch { emailSendStatus = "failed_or_unknown"; }
+  // SMTP and SQL are separate. This is not inbox delivery evidence; never retry mail here.
+  await databases().records.update(emailAuthRequests).set({ emailSendStatus }).where(eq(emailAuthRequests.emailAuthRequestId, request.emailAuthRequestId));
 }
 
-async function validChallenge(tx: Transaction, raw: string) {
-  const [hint] = await tx.select().from(challenges).where(eq(challenges.tokenHash, digest(checkedToken(raw))));
+async function validEmailAuthRequest(tx: Transaction, raw: string) {
+  const [hint] = await tx.select().from(emailAuthRequests).where(eq(emailAuthRequests.authLinkTokenHash, digest(checkedToken(raw))));
   if (!hint) throw new AppError("INVALID_LINK");
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${hint.email}, 0))`);
-  const [row] = await tx.select().from(challenges).where(eq(challenges.id, hint.id)).for("update");
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${hint.emailAddress}, 0))`);
+  const [row] = await tx.select().from(emailAuthRequests).where(eq(emailAuthRequests.emailAuthRequestId, hint.emailAuthRequestId)).for("update");
   const now = await dbNow(tx);
-  if (!row || row.revokedAt) throw new AppError("REPLACED_LINK");
-  if (row.consumedAt) throw new AppError("USED_LINK");
-  if (row.expiresAt <= now) throw new AppError("EXPIRED_LINK");
+  if (!row || row.authLinkInvalidatedAt) throw new AppError("REPLACED_LINK");
+  if (row.authLinkUsedAt) throw new AppError("USED_LINK");
+  if (row.authLinkExpiresAt <= now) throw new AppError("EXPIRED_LINK");
   return { row, now };
 }
 export async function inspectLink(raw: string) {
   return databases().records.transaction(async tx => {
-    const { row } = await validChallenge(tx, raw);
-    return { email: row.email, purpose: row.purpose };
+    const { row } = await validEmailAuthRequest(tx, raw);
+    return { email: row.emailAddress, purpose: row.authenticationPurpose };
   });
 }
 export async function consumeLink(raw: string, currentSession?: string) {
   return databases().records.transaction(async tx => {
-    const { row } = await validChallenge(tx, raw);
-    if (row.purpose === "delete") {
-      const who = await identity(tx, currentSession);
-      const now = await dbNow(tx);
-      if (row.expiresAt <= now) throw new AppError("EXPIRED_LINK");
-      if (who.sessionId !== row.sessionId || who.email !== row.email) throw new AppError("ORIGINAL_BROWSER_REQUIRED", 403);
-      await tx.update(challenges).set({ consumedAt: now }).where(eq(challenges.id, row.id));
-      await tx.insert(deletionConfirmations).values({ sessionId: who.sessionId, expiresAt: new Date(now.getTime() + 600_000) })
-        .onConflictDoUpdate({ target: deletionConfirmations.sessionId, set: { expiresAt: new Date(now.getTime() + 600_000), consumedAt: null } });
-      return { purpose: "delete" as const };
+    const { row } = await validEmailAuthRequest(tx, raw);
+    if (row.authenticationPurpose === "account_deletion") {
+      const who = await identity(tx, currentSession), now = await dbNow(tx);
+      if (row.authLinkExpiresAt <= now) throw new AppError("EXPIRED_LINK");
+      if (who.loginSessionId !== row.requestingLoginSessionId || who.email !== row.emailAddress) throw new AppError("ORIGINAL_BROWSER_REQUIRED", 403);
+      await tx.update(emailAuthRequests).set({ authLinkUsedAt: now }).where(eq(emailAuthRequests.emailAuthRequestId, row.emailAuthRequestId));
+      await tx.update(loginSessions).set({ accountDeletionAuthorizationExpiresAt: new Date(now.getTime() + 600_000), accountDeletionAuthorizationUsedAt: null })
+        .where(eq(loginSessions.loginSessionId, who.loginSessionId));
+      return { purpose: "account_deletion" as const };
     }
     if (currentSession) {
       try {
         const existing = await identity(tx, currentSession, false);
-        if (existing.email !== row.email) throw new AppError("LOGOUT_FIRST", 409);
+        if (existing.email !== row.emailAddress) throw new AppError("LOGOUT_FIRST", 409);
       } catch (error) { if (!(error instanceof AppError) || error.code !== "LOGIN_REQUIRED") throw error; }
     }
-    await tx.insert(users).values({ email: row.email }).onConflictDoNothing({ target: users.email });
-    const [user] = await tx.select().from(users).where(eq(users.email, row.email)).for("update");
-    if (!user || user.deletedAt) throw new AppError("INVALID_LINK");
+    await tx.insert(users).values({ emailAddress: row.emailAddress }).onConflictDoNothing({ target: users.emailAddress });
+    const [user] = await tx.select().from(users).where(eq(users.emailAddress, row.emailAddress)).for("update");
+    if (!user || user.accountDeletionConfirmedAt) throw new AppError("INVALID_LINK");
     const now = await dbNow(tx);
-    if (row.expiresAt <= now) throw new AppError("EXPIRED_LINK");
-    const secret = token();
-    const expiresAt = new Date(now.getTime() + 30 * DAY);
-    await tx.insert(authSessions).values({ userId: user.id, tokenHash: digest(secret), createdAt: now, lastSeenAt: now, expiresAt });
-    await tx.update(challenges).set({ consumedAt: now }).where(eq(challenges.id, row.id));
+    if (row.authLinkExpiresAt <= now) throw new AppError("EXPIRED_LINK");
+    const secret = token(), expiresAt = new Date(now.getTime() + 30 * DAY);
+    await tx.insert(loginSessions).values({ userId: user.userId, loginTokenHash: digest(secret), loginSessionCreatedAt: now, lastAuthenticatedActivityAt: now, loginSessionExpiresAt: expiresAt });
+    await tx.update(emailAuthRequests).set({ authLinkUsedAt: now }).where(eq(emailAuthRequests.emailAuthRequestId, row.emailAuthRequestId));
     return { purpose: "login" as const, secret, expiresAt };
   });
 }
@@ -132,19 +130,19 @@ export async function logout(raw: string | undefined) {
   await databases().records.transaction(async tx => {
     try {
       const who = await identity(tx, raw, false);
-      await tx.update(authSessions).set({ revokedAt: await dbNow(tx) }).where(eq(authSessions.id, who.sessionId));
+      await tx.update(loginSessions).set({ loginSessionInvalidatedAt: await dbNow(tx) }).where(eq(loginSessions.loginSessionId, who.loginSessionId));
     } catch (error) { if (!(error instanceof AppError) || error.code !== "LOGIN_REQUIRED") throw error; }
   });
 }
 export async function deleteAccount(raw: string | undefined) {
   return withIdentity(raw, async (tx, who) => {
-    const [proof] = await tx.select().from(deletionConfirmations).where(eq(deletionConfirmations.sessionId, who.sessionId)).for("update");
+    const [session] = await tx.select().from(loginSessions).where(eq(loginSessions.loginSessionId, who.loginSessionId)).for("update");
     const now = await dbNow(tx);
-    if (!proof || proof.consumedAt || proof.expiresAt <= now) throw new AppError("CONFIRM_DELETE_FIRST", 403);
-    await tx.update(deletionConfirmations).set({ consumedAt: now }).where(eq(deletionConfirmations.sessionId, who.sessionId));
-    await tx.update(users).set({ deletedAt: now }).where(eq(users.id, who.userId));
-    await tx.update(authSessions).set({ revokedAt: now }).where(eq(authSessions.userId, who.userId));
-    await tx.update(challenges).set({ revokedAt: now }).where(eq(challenges.email, who.email));
-    await tx.insert(jobs).values({ userId: who.userId, kind: "delete_account", dueAt: now });
+    if (!session?.accountDeletionAuthorizationExpiresAt || session.accountDeletionAuthorizationUsedAt || session.accountDeletionAuthorizationExpiresAt <= now) throw new AppError("CONFIRM_DELETE_FIRST", 403);
+    await tx.update(loginSessions).set({ accountDeletionAuthorizationUsedAt: now }).where(eq(loginSessions.loginSessionId, who.loginSessionId));
+    await tx.update(users).set({ accountDeletionConfirmedAt: now }).where(eq(users.userId, who.userId));
+    await tx.update(loginSessions).set({ loginSessionInvalidatedAt: now }).where(eq(loginSessions.userId, who.userId));
+    await tx.update(emailAuthRequests).set({ authLinkInvalidatedAt: now }).where(eq(emailAuthRequests.emailAddress, who.email));
+    await tx.insert(scheduledJobs).values({ targetUserId: who.userId, jobType: "delete_account", scheduledRunAt: now });
   });
 }

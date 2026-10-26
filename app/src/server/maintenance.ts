@@ -2,88 +2,94 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { DAY, dbNow } from "./auth";
 import { databases, type Records } from "./db";
-import { authSessions, challenges, controls, deletionConfirmations, jobs, learningSessions, notes, users } from "./db/schema";
-import { transcripts } from "./db/transcript-schema";
+import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "./db/schema";
+import { transcriptSessionStates } from "./db/transcript-schema";
+import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcript-lifecycle";
 import { finalize } from "./learning";
 
 export async function maintenance() {
   const db = databases();
   let accounts = 0, sessions = 0, failures = 0;
   // One user's changes serialize with authentication/save/end/delete. No provider calls under locks.
-  const owners = await db.records.select({ id: users.id }).from(users);
+  const owners = await db.records.select({ id: users.userId }).from(users);
   for (const owner of owners) {
     try {
       await db.records.transaction(async tx => {
-        const [user] = await tx.select().from(users).where(eq(users.id, owner.id)).for("update");
+        const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
         if (!user) return;
         const now = await dbNow(tx);
-        if (user.deletedAt) {
-          await db.temporary.delete(transcripts).where(eq(transcripts.userId, user.id));
-          await tx.delete(challenges).where(eq(challenges.email, user.email));
-          await tx.delete(controls).where(eq(controls.email, user.email));
-          await tx.delete(users).where(eq(users.id, user.id));
+        if (user.accountDeletionConfirmedAt) {
+          await db.temporary.transaction(async temp => {
+            await temp.delete(transcriptSessionStates).where(eq(transcriptSessionStates.userId, user.userId));
+          });
+          await tx.delete(emailAuthRequests).where(eq(emailAuthRequests.emailAddress, user.emailAddress));
+          await tx.delete(emailAuthRateLimits).where(eq(emailAuthRateLimits.emailAddress, user.emailAddress));
+          await tx.delete(users).where(eq(users.userId, user.userId));
           accounts++;
           return;
         }
-        const rows = await tx.select().from(learningSessions).where(eq(learningSessions.userId, user.id)).for("update");
+        const rows = await tx.select().from(learningSessions).where(eq(learningSessions.userId, user.userId)).for("update");
         for (let row of rows) {
-          if (row.status === "active" && row.leaseUntil && row.leaseUntil <= now) {
-            await tx.update(learningSessions).set({ status: "interrupted", interruptedAt: row.leaseUntil }).where(eq(learningSessions.id, row.id));
-            row = { ...row, status: "interrupted", interruptedAt: row.leaseUntil };
+          if (row.learningSessionStatus === "active" && row.learningConnectionExpiresAt && row.learningConnectionExpiresAt <= now) {
+            await tx.update(learningSessions).set({ learningSessionStatus: "interrupted", learningSessionInterruptedAt: row.learningConnectionExpiresAt }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
+            row = { ...row, learningSessionStatus: "interrupted", learningSessionInterruptedAt: row.learningConnectionExpiresAt };
           }
-          if (row.status === "interrupted" && row.interruptedAt && now.getTime() >= row.interruptedAt.getTime() + DAY) {
-            const eraseAt = new Date(now.getTime() + DAY);
-            await tx.update(learningSessions).set({ status: "ended", endedAt: now, eraseAt, noteStatus: "pending", connectionHash: null }).where(eq(learningSessions.id, row.id));
-            row = { ...row, status: "ended", endedAt: now, eraseAt, noteStatus: "pending", connectionHash: null };
+          if (row.learningSessionStatus === "interrupted" && row.learningSessionInterruptedAt && now.getTime() >= row.learningSessionInterruptedAt.getTime() + DAY) {
+            const transcriptDeleteDeadlineAt = new Date(now.getTime() + DAY);
+            await tx.update(learningSessions).set({ learningSessionStatus: "ended", learningSessionEndedAt: now, transcriptDeleteDeadlineAt, noteGenerationStatus: "pending", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
+            row = { ...row, learningSessionStatus: "ended", learningSessionEndedAt: now, transcriptDeleteDeadlineAt, noteGenerationStatus: "pending", learningConnectionTokenHash: null };
           }
-          const [job] = await tx.select().from(jobs).where(and(eq(jobs.sessionId, row.id), eq(jobs.kind, "note")));
-          if (row.endedAt && (row.noteStatus !== "waiting_save" || (row.eraseAt && row.eraseAt <= now) ||
-            (job && job.dueAt <= now && (!row.leaseUntil || row.leaseUntil <= now)))) {
+          const [job] = await tx.select().from(scheduledJobs).where(and(eq(scheduledJobs.targetLearningSessionId, row.learningSessionId), eq(scheduledJobs.jobType, "note")));
+          if (row.learningSessionEndedAt && (row.noteGenerationStatus !== "waiting_save" || (row.transcriptDeleteDeadlineAt && row.transcriptDeleteDeadlineAt <= now) ||
+            (job && job.scheduledRunAt <= now && (!row.learningConnectionExpiresAt || row.learningConnectionExpiresAt <= now)))) {
             await finalize(tx, row);
-            if (job) await tx.delete(jobs).where(eq(jobs.id, job.id));
+            if (job) await tx.delete(scheduledJobs).where(eq(scheduledJobs.scheduledJobId, job.scheduledJobId));
           }
           // A trimmed client window must not erase previously saved conversation history.
           sessions++;
         }
-        await tx.delete(notes).where(and(eq(notes.userId, user.id), sql`${notes.expiresAt} <= ${now}`));
+        await tx.delete(learningSessionNotes).where(and(eq(learningSessionNotes.userId, user.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} <= ${now}`));
         // A successful note commits before its source is deleted, in the next pass below.
       });
       await db.records.transaction(async tx => {
-        const [user] = await tx.select().from(users).where(eq(users.id, owner.id)).for("update");
+        const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
         if (!user) return;
-        const rows = await tx.select().from(learningSessions).where(and(eq(learningSessions.userId, user.id), sql`${learningSessions.noteStatus} in ('ready','empty','expired')`)).for("update");
-        for (const row of rows) await db.temporary.delete(transcripts).where(eq(transcripts.sessionId, row.id));
+        const rows = await tx.select().from(learningSessions).where(and(eq(learningSessions.userId, user.userId), sql`${learningSessions.noteGenerationStatus} in ('ready','empty','expired')`)).for("update");
+        for (const row of rows) await deleteTranscriptSource(row.learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
       });
     } catch { failures++; }
   }
   // Remove provisional sources from a rolled-back session creation under the same user lock.
-  const sources = await db.temporary.select({ id: transcripts.sessionId, userId: transcripts.userId }).from(transcripts);
+  const sources = await db.temporary.select({ id: transcriptSessionStates.learningSessionId, userId: transcriptSessionStates.userId }).from(transcriptSessionStates);
   for (const source of sources) await db.records.transaction(async tx => {
-    const [user] = await tx.select().from(users).where(eq(users.id, source.userId)).for("update");
-    const [session] = await tx.select({ id: learningSessions.id }).from(learningSessions).where(eq(learningSessions.id, source.id));
-    if (!user || !session) await db.temporary.delete(transcripts).where(eq(transcripts.sessionId, source.id));
+    const [user] = await tx.select().from(users).where(eq(users.userId, source.userId)).for("update");
+    const [session] = await tx.select({ id: learningSessions.learningSessionId }).from(learningSessions).where(eq(learningSessions.learningSessionId, source.id));
+    if (!user || !session) await db.temporary.transaction(async temp => {
+      await temp.delete(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, source.id));
+    });
   });
   await db.records.transaction(async tx => {
     // Start before the 24-hour maximum, leaving scheduling/retry room.
     const now = await dbNow(tx), cutoff = new Date(now.getTime() - 23 * 3_600_000);
-    await tx.delete(challenges).where(sql`least(${challenges.expiresAt}, coalesce(${challenges.consumedAt}, 'infinity'::timestamptz), coalesce(${challenges.revokedAt}, 'infinity'::timestamptz)) <= ${cutoff}`);
-    await tx.delete(deletionConfirmations).where(sql`least(${deletionConfirmations.expiresAt}, coalesce(${deletionConfirmations.consumedAt}, 'infinity'::timestamptz)) <= ${cutoff}`);
-    await tx.delete(authSessions).where(sql`least(${authSessions.expiresAt}, coalesce(${authSessions.revokedAt}, 'infinity'::timestamptz)) <= ${cutoff}`);
+    await tx.delete(emailAuthRequests).where(sql`least(${emailAuthRequests.authLinkExpiresAt}, coalesce(${emailAuthRequests.authLinkUsedAt}, 'infinity'::timestamptz), coalesce(${emailAuthRequests.authLinkInvalidatedAt}, 'infinity'::timestamptz)) <= ${cutoff}`);
+    // Expired deletion authority has its own retention even while login stays valid.
+    await tx.update(loginSessions).set({ accountDeletionAuthorizationExpiresAt: null, accountDeletionAuthorizationUsedAt: null })
+      .where(sql`least(coalesce(${loginSessions.accountDeletionAuthorizationExpiresAt}, 'infinity'::timestamptz), coalesce(${loginSessions.accountDeletionAuthorizationUsedAt}, 'infinity'::timestamptz)) <= ${cutoff}`);
+    await tx.delete(loginSessions).where(sql`least(${loginSessions.loginSessionExpiresAt}, coalesce(${loginSessions.loginSessionInvalidatedAt}, 'infinity'::timestamptz)) <= ${cutoff}`);
   });
   // Do not acquire email locks while holding authentication-row locks: issuance uses the opposite order.
-  const oldControls = await db.records.select().from(controls).where(sql`${controls.requestedAt} < clock_timestamp() - interval '23 hours'`);
+  const oldControls = await db.records.select().from(emailAuthRateLimits).where(sql`${emailAuthRateLimits.lastAuthEmailRequestedAt} < clock_timestamp() - interval '23 hours'`);
   for (const control of oldControls) await db.records.transaction(async tx => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${control.email}, 0))`);
-    await tx.delete(controls).where(and(eq(controls.email, control.email), sql`${controls.requestedAt} < clock_timestamp() - interval '23 hours'`));
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${control.emailAddress}, 0))`);
+    await tx.delete(emailAuthRateLimits).where(and(eq(emailAuthRateLimits.emailAddress, control.emailAddress), sql`${emailAuthRateLimits.lastAuthEmailRequestedAt} < clock_timestamp() - interval '23 hours'`));
   });
   return { accounts, sessions, failures };
 }
 
 export async function invalidateRestoredAuthentication(records: Records = databases().records) {
   await records.transaction(async tx => {
-    await tx.delete(deletionConfirmations);
-    await tx.delete(authSessions);
-    await tx.delete(challenges);
-    await tx.delete(controls);
+    await tx.delete(loginSessions);
+    await tx.delete(emailAuthRequests);
+    await tx.delete(emailAuthRateLimits);
   });
 }

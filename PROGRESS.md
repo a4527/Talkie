@@ -1,13 +1,17 @@
 # Talkie 진행 현황
 
-마지막 갱신: 2026-10-23 · 체크포인트 push·로컬 인증/저장 구현
+마지막 갱신: 2026-10-25 · 승인한 DB 명명·9개 테이블 통합 적용
 현재 단계: 로컬 합성 이메일 인증·분리 PostgreSQL 저장/재개·가짜 노트 통합 검증, 실제 AI·운영 검증 준비
 
 체크포인트 `8e26518`을 origin/main에 push한 뒤 로컬 구현을 진행했다. `/account`에서 합성 이메일 인증·로그아웃·탈퇴 확인, `/learn`에서 계정별 저장/재개·가짜 노트/다운로드를 시험할 수 있다. 실행은 [README](README.md#로컬-인증저장-시험)를 따른다. 구현 후 체크포인트의 내용·검증은 [작업 기록](docs/worklogs/2026-10-23.md#로컬-인증저장-구현-체크포인트)을, 커밋·원격 반영 여부는 Git 이력을 따른다.
 
-실제 PostgreSQL 두 인스턴스의 인증/저장/실패·백업 복원 시험 14개, 기존 단위 테스트 13개, PC/모바일 브라우저 12개·타입 검사·빌드를 통과했다. Docker 데몬과 사용자 systemd bus가 없어 Compose/timer 실행은 미검증이다. 실제 AI·음성·실제 메일·유료 전환·운영 백업/삭제 상태 재적용·JSONL 로거는 남는다. D-02/B-01/B-05/B-06은 IN PROGRESS이며 완료가 아니다.
+실제 PostgreSQL 두 인스턴스의 인증/저장/실패·백업 복원 시험 14개, 기존 단위 테스트 13개, PC/모바일 브라우저 12개·타입 검사·빌드를 통과했다. 2026-10-23에는 Docker 데몬과 사용자 systemd bus가 없어 Compose/timer 실행을 검증하지 못했다. 2026-10-24 실행 중인 Compose DB 두 개에 스키마 변경을 적용했으며 timer 실행은 여전히 미검증이다. 실제 AI·음성·실제 메일·유료 전환·운영 백업/삭제 상태 재적용·JSONL 로거는 남는다. D-02/B-01/B-05/B-06은 IN PROGRESS이며 완료가 아니다.
 
-작업 상태의 기준은 [TASKS.md](TASKS.md), 제품 정책은 [PRD.md](PRD.md), 결정 상태·이유는 [DECISIONS.md](DECISIONS.md)와 연결 ADR이다. 오늘 결과·점검 한계는 [작업 기록](docs/worklogs/2026-10-23.md)을 따른다.
+원문 생성·삭제 이력(DEC-048)을 보존하면서 DEC-049의 명명 변경과 탈퇴 권한/원문 상태 통합을 구현했다. 지속 7개·임시 2개이며 저장 순번은 `save_sequence_number`, 확정 위치는 `confirmed_save_sequence_number`다. 현재 계약은 [design](design.md), 검토 과정은 [개편 메모](docs/proposals/database-schema-refactor.md)를 따른다.
+
+2026-10-25 기존 로컬 Compose DB 두 개에 새 마이그레이션을 적용했다. 각 DB에서 이관 시험/롤백 후 실제 적용했고 정규화한 기존 행의 내용 보존을 확인했다. 독립 PostgreSQL 두 인스턴스에서 서버 시험 23개(합성 백업/복원 포함), 기존 단위 13개, PC/모바일 Chromium 12개·타입 검사·빌드를 통과했다. 실제 AI·메일 전달·운영 기한/성능 검증 완료는 아니다. 예약 실행기 전면 개편·장기 저장 비용·부분 커밋 후 메모리 소실 재개의 복구 공백은 후속이다.
+
+작업 상태의 기준은 [TASKS.md](TASKS.md), 제품 정책은 [PRD.md](PRD.md), 결정은 [DECISIONS.md](DECISIONS.md)와 연결 ADR이다. D-02/B-01/B-05/B-06은 IN PROGRESS를 유지하며 당일 검증 조건·한계·점검 결과는 [작업 기록](docs/worklogs/2026-10-25.md)을 따른다.
 
 ## 현재 작업 상태
 
