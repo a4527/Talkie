@@ -22,10 +22,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
+    # Reading/reporting old results must not restart their retention clock.
+    record = dict(record)
+    for old, new in (("ts", "recorded_at"), ("ledger_entry", "ledger_entry_id")):
+        if old in record and new not in record:
+            record[new] = record.pop(old)
+    return record
+
+
 def append(record: dict[str, Any], path: Path = RESULTS_PATH) -> None:
     """한 줄 JSON을 추가한다. 호출 전에 내용(발화·전사)이 섞이지 않았는지는 호출자가 책임진다."""
     ensure_eval_dir()
-    line = json.dumps({"ts": _now().isoformat(timespec="seconds"), **record}, ensure_ascii=False)
+    line = json.dumps({"recorded_at": _now().isoformat(timespec="seconds"), **record}, ensure_ascii=False)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as handle:
@@ -39,7 +48,7 @@ def read_all(path: Path = RESULTS_PATH) -> list[dict[str, Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
-            records.append(json.loads(line))
+            records.append(_normalize_record(json.loads(line)))
     return records
 
 
@@ -54,11 +63,11 @@ def prune(days: int = RETENTION_DAYS, path: Path = RESULTS_PATH, now: datetime |
         if not line.strip():
             continue
         try:
-            ts = datetime.fromisoformat(json.loads(line)["ts"])
+            recorded_at = datetime.fromisoformat(_normalize_record(json.loads(line))["recorded_at"])
         except (ValueError, KeyError, json.JSONDecodeError):
             removed += 1  # 읽을 수 없는 줄도 남기지 않는다
             continue
-        if ts >= cutoff:
+        if recorded_at >= cutoff:
             kept.append(line)
         else:
             removed += 1

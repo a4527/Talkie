@@ -1,6 +1,6 @@
 import "server-only";
 
-export function config() {
+export function getLocalConfig() {
   const origin = new URL(process.env.APP_ORIGIN ?? "http://127.0.0.1:3000");
   const local = ["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname);
   if (!local || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
@@ -17,7 +17,7 @@ export class AppError extends Error {
   constructor(readonly code: string, readonly status = 400) { super(code); }
 }
 
-export function emailKey(input: unknown): string {
+export function normalizeTestEmailAddress(input: unknown): string {
   if (typeof input !== "string") throw new AppError("INVALID_EMAIL");
   const email = input.trim();
   if (email.length > 254 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email)) throw new AppError("INVALID_EMAIL");

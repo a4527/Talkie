@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { FakeProvider, type Scenario } from "../learning/fake-provider";
-import { markdown } from "../learning/note";
+import { FakeProvider, type DemoScenario } from "../learning/fake-provider";
+import { renderNoteMarkdown } from "../learning/note";
 import { LearningSession } from "../learning/session";
-import type { Phase } from "../learning/types";
+import type { LearningPhase } from "../learning/types";
 
-const labels: Record<Phase, string> = {
+const labels: Record<LearningPhase, string> = {
   ready: "시작 준비", conversation: "대화 중", waiting: "응답 기다리는 중",
   retry: "다시 말해 보기", paused: "일시 중단", ended: "대화 종료",
 };
@@ -38,10 +38,10 @@ export function Conversation({ session, provider, onReset, persistent = false }:
 
   function download() {
     if (!state.note) return;
-    const url = URL.createObjectURL(new Blob([markdown(state.note)], { type: "text/markdown;charset=utf-8" }));
+    const url = URL.createObjectURL(new Blob([renderNoteMarkdown(state.note)], { type: "text/markdown;charset=utf-8" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${state.note.date}.md`;
+    anchor.download = `${state.note.learningEndDateKst}.md`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -56,7 +56,7 @@ export function Conversation({ session, provider, onReset, persistent = false }:
       </header>
       <div className="messages" role="log" aria-label="확인된 대화 기록" aria-live="polite" aria-relevant="additions">
         <p className="chat-intro">완벽한 문장보다, 한 문장부터 시작해요.</p>
-        {state.turns.map(turn => <div className={`turn ${turn.role}`} key={turn.id}>
+        {state.turns.map(turn => <div className={`turn ${turn.role}`} key={turn.turnId}>
           <span className="speaker">{turn.role === "assistant" ? "T · Talkie 데모" : "나"}</span>
           <p>{turn.text}</p>
         </div>)}
@@ -65,7 +65,7 @@ export function Conversation({ session, provider, onReset, persistent = false }:
         <div ref={bottom} />
       </div>
       <div className="chat-footer">
-        <p className="session-message" role="status">{state.message || (state.phase === "retry" ? "표현을 다시 말해 보세요. 데모는 첫 재시도 실패 → 두 번째 성공 순서로 진행합니다." : "")}</p>
+        <p className="session-message" role="status">{state.statusMessage || (state.phase === "retry" ? "표현을 다시 말해 보세요. 데모는 첫 재시도 실패 → 두 번째 성공 순서로 진행합니다." : "")}</p>
         {state.phase !== "ended" && <form onSubmit={e => { e.preventDefault(); send(); }}>
           <label htmlFor="answer">{state.phase === "retry" ? "다시 답변하기" : "내 답변"}</label>
           <div className="composer">
@@ -92,7 +92,7 @@ export function Conversation({ session, provider, onReset, persistent = false }:
         <h2>오늘의 표현</h2>
         {correction ? <>
           <p className="small-label">내가 말한 문장</p>
-          <blockquote>{state.turns.find(t => t.id === correction.sourceTurnId)?.text}</blockquote>
+          <blockquote>{state.turns.find(t => t.turnId === correction.sourceTurnId)?.text}</blockquote>
           <p className="small-label">시나리오의 연습 표현</p>
           <p className="expression">{correction.replacement}</p>
           <p className="explanation">{correction.explanation}</p>
@@ -102,21 +102,21 @@ export function Conversation({ session, provider, onReset, persistent = false }:
 
       {state.phase === "ended" && <section className="card note-card" aria-label="학습 노트">
         <span className="eyebrow">YOUR LEARNING NOTE</span><h2>오늘 남긴 한 걸음</h2>
-        {state.noteStatus === "ready" && state.note ? <>
-          <p className="note-date">{state.note.date} · 한국 시간 종료일</p>
+        {state.noteGenerationStatus === "ready" && state.note ? <>
+          <p className="note-date">{state.note.learningEndDateKst} · 한국 시간 종료일</p>
           <p>확인된 내 답변 {state.note.evidence.length}개 · 연습 표현 {state.note.items.length}개</p>
           {!state.note.items.length && <p>확인된 교정이 없습니다.</p>}
-          <details><summary>노트 내용 보기</summary><pre>{markdown(state.note)}</pre></details>
+          <details><summary>노트 내용 보기</summary><pre>{renderNoteMarkdown(state.note)}</pre></details>
           <button className="primary" onClick={download}>Markdown 다운로드 <span aria-hidden="true">↓</span></button>
-        </> : <p>{state.message}</p>}
-        {!persistent && state.noteStatus === "failed" && <button className="secondary" onClick={() => { void session.generateNote(); setNoteFailure(false); }}>노트만 다시 만들기</button>}
+        </> : <p>{state.statusMessage}</p>}
+        {!persistent && state.noteGenerationStatus === "failed" && <button className="secondary" onClick={() => { void session.generateNote(); setNoteFailure(false); }}>노트만 다시 만들기</button>}
       </section>}
 
       <details className="card demo-tools">
         <summary>데모 시나리오 확인</summary>
         <p>실제 장애가 아닌 가짜 공급자 시험입니다.</p>
         <label><input type="checkbox" checked={replyFailure} disabled={state.phase === "ended" || state.phase === "waiting"} onChange={e => { provider.failNextReply = e.target.checked; setReplyFailure(e.target.checked); }} /> 다음 응답 실패</label>
-        <label><input type="checkbox" checked={noteFailure} disabled={state.phase === "ended" && state.noteStatus !== "failed"} onChange={e => { provider.failNextNote = e.target.checked; setNoteFailure(e.target.checked); }} /> 다음 노트 생성 실패</label>
+        <label><input type="checkbox" checked={noteFailure} disabled={state.phase === "ended" && state.noteGenerationStatus !== "failed"} onChange={e => { provider.failNextNote = e.target.checked; setNoteFailure(e.target.checked); }} /> 다음 노트 생성 실패</label>
         <label><input type="checkbox" checked={slow} onChange={e => { provider.delayMs = e.target.checked ? 3500 : 650; setSlow(e.target.checked); }} /> 느린 응답 (3.5초)</label>
         <details className="metrics"><summary>요청·상태·대기 시간 ({state.metrics.length})</summary>
           <p>가짜 공급자 측정 · 최근 100개 · 메모리만 사용</p>

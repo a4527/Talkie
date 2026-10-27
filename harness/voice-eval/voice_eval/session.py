@@ -156,7 +156,7 @@ async def run_session(transport: Any, runner_args: Any, cfg: SessionConfig, matr
                 "type": "session",
                 "config_id": cfg.id,
                 "session_id": session_id,
-                "ledger_entry": entry_id,
+                "ledger_entry_id": entry_id,
                 "duration_s": duration,
                 "reserved_krw": reserved_krw,
                 "latency": _summarize(latencies),

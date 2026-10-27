@@ -1,15 +1,15 @@
 import type { Note, NoteRequest } from "./types";
 
-export function koreaDate(iso: string): string {
+export function formatKstDate(iso: string): string {
   return new Intl.DateTimeFormat("sv-SE", {
     timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(iso));
 }
 
 export function buildNote(request: NoteRequest): Note {
-  const evidence = request.turns.filter(t => t.role === "user").map(t => ({ turnId: t.id, text: t.text }));
+  const evidence = request.turns.filter(t => t.role === "user").map(t => ({ turnId: t.turnId, text: t.text }));
   return {
-    date: koreaDate(request.endedAt), evidence,
+    learningEndDateKst: formatKstDate(request.endedAt), evidence,
     items: request.corrections.map(c => ({
       sourceTurnId: c.sourceTurnId,
       original: evidence.find(t => t.turnId === c.sourceTurnId)?.text ?? "",
@@ -20,18 +20,18 @@ export function buildNote(request: NoteRequest): Note {
 }
 
 export function validateNote(note: Note, request: NoteRequest): boolean {
-  if (note.date !== koreaDate(request.endedAt) || note.evidence.length === 0) return false;
-  const users = request.turns.filter(t => t.role === "user");
-  if (note.evidence.length !== users.length || new Set(note.evidence.map(e => e.turnId)).size !== users.length) return false;
-  if (!note.evidence.every(e => users.some(t => t.id === e.turnId && t.text === e.text))) return false;
+  if (note.learningEndDateKst !== formatKstDate(request.endedAt) || note.evidence.length === 0) return false;
+  const userTurns = request.turns.filter(t => t.role === "user");
+  if (note.evidence.length !== userTurns.length || new Set(note.evidence.map(e => e.turnId)).size !== userTurns.length) return false;
+  if (!note.evidence.every(e => userTurns.some(t => t.turnId === e.turnId && t.text === e.text))) return false;
   if (note.items.length !== request.corrections.length || new Set(note.items.map(i => i.sourceTurnId)).size !== note.items.length) return false;
   return note.items.every(i => request.corrections.some(c =>
     c.sourceTurnId === i.sourceTurnId && c.deliveredTurnId === i.deliveredTurnId &&
     c.replacement === i.replacement && c.explanation === i.explanation &&
-    users.some(t => t.id === i.sourceTurnId && t.text === i.original) &&
-    request.turns.some(t => t.id === i.deliveredTurnId && t.role === "assistant" && t.text.includes(i.replacement)) &&
+    userTurns.some(t => t.turnId === i.sourceTurnId && t.text === i.original) &&
+    request.turns.some(t => t.turnId === i.deliveredTurnId && t.role === "assistant" && t.text.includes(i.replacement)) &&
     JSON.stringify(c.attempts) === JSON.stringify(i.attempts) &&
-    i.attempts.every(a => users.some(t => t.id === a.turnId))));
+    i.attempts.every(a => userTurns.some(t => t.turnId === a.turnId))));
 }
 
 // User text stays literal text in both the UI and Markdown; never render it as HTML.
@@ -41,9 +41,9 @@ function quote(text: string): string {
   return literal.split(/\r?\n/).map(line => `> ${line}`).join("\n");
 }
 
-export function markdown(note: Note): string {
+export function renderNoteMarkdown(note: Note): string {
   return [
-    `# ${note.date} 영어 학습 노트`,
+    `# ${note.learningEndDateKst} 영어 학습 노트`,
     "가짜 AI · 로컬 텍스트 데모 / 실제 언어 평가 결과가 아닙니다.",
     "## 대화 요약", "일상 대화 데모에서 확인된 내 답변입니다.",
     ...note.evidence.map(e => `${quote(e.text)}\n\n근거: ${e.turnId}`),

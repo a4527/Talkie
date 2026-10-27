@@ -19,7 +19,7 @@
 | `DEC-020` | 이메일 링크 로그인·마지막 이용 후 30일 유지·로그인 링크 10분 | Accepted | [ADR-020](docs/adr/020-email-link-login-and-session-retention.md) | DEC-014의 로그인 방식·DEC-019의 탈퇴 본인 확인 구체화, 링크 일회성 후속 합의 포함 |
 | `DEC-021` | 탈퇴 즉시 차단·24시간 이내 일괄 삭제·백업 7일 이내 삭제 | Accepted | [ADR-021](docs/adr/021-scheduled-account-deletion-and-backup-deadlines.md) | DEC-019·DEC-020의 탈퇴 처리·백업 기한 구체화 |
 | `DEC-024` | 외부 환경 중단 후 24시간 자동 종료·노트 생성 | Accepted | [ADR-024](docs/adr/024-auto-close-interrupted-session-after-one-day.md) | DEC-003의 절대적 명시 종료 규칙에 예외 추가, DEC-010의 종료 실행 범위 구체화 |
-| `DEC-025` | 앱의 휘발성 음성 처리·공급자 모델 학습 금지·최대 30일 보관 | Accepted | [ADR-025](docs/adr/025-ephemeral-audio-and-provider-retention.md) | DEC-008·DEC-016의 음성 처리·공급자 조건 구체화. 실험 한정 유예는 DEC-052 |
+| `DEC-025` | 앱의 휘발성 음성 처리·공급자 모델 학습 금지·최대 30일 보관 | Partially Superseded | [ADR-025](docs/adr/025-ephemeral-audio-and-provider-retention.md) | DEC-008·DEC-016의 음성 처리·공급자 조건 구체화. 실험 한정 유예는 DEC-052/056 |
 | `DEC-026` | 앱 직접 관리 이메일 링크·세션 인증 | Accepted | [ADR-026](docs/adr/026-app-managed-email-link-authentication.md) | DEC-020의 인증 구현 책임 구체화 |
 | `DEC-028` | 지속 작업 목록과 정시 실행 | Accepted | [ADR-028](docs/adr/028-durable-scheduled-work-list.md) | DEC-012/021/024의 작업 실행 방식 구체화 |
 | `DEC-031` | 저장 실패 누적 재시도·즉시 재개·비동기 부분 노트 | Accepted | [ADR-031](docs/adr/031-save-retries-and-note-outcomes.md) | DEC-012/013/024/028의 미정 동작 구체화 |
@@ -29,6 +29,7 @@
 | `DEC-046` | 이메일 인증 브라우저·수명·백업 복원 후 무효화 | Accepted | [ADR-046](docs/adr/046-email-authentication-lifecycle-and-restore.md) | DEC-020/026/035/036의 미정 사용성·수명/복원 계약 구체화 |
 | `DEC-047` | 미저장 버퍼 상한에서 최근 완결 기록 우선 | Accepted | [ADR-047](docs/adr/047-retain-recent-unsaved-records-at-buffer-limit.md) | DEC-031/040의 상한 도달 시 기록 유지/포기 미정 계약 구체화 |
 | <a id="dec-049"></a>`DEC-049` | DB 명명과 로그인·원문 상태 통합 | Accepted | [ADR-049](docs/adr/049-clear-database-names-and-merged-session-state.md) | DEC-020/034/035/036/046/048의 사용자·데이터 경계를 유지하고 저장 구조 구체화 |
+| <a id="dec-056"></a>`DEC-056` | 비공개 로컬 시험의 공급자 학습 허용 | Accepted | [ADR-056](docs/adr/056-local-test-provider-training-exception.md) | DEC-025/052의 합성·본인 음성 시험 조건만 부분 대체 |
 
 ## 짧은 결정
 
@@ -206,19 +207,31 @@
 
 ### DEC-052 · 후보 음성 시험 범위와 보관 상한 완화 조건
 
-2026-10-26 · Accepted — 사용자가 스모크에서 OpenAI Realtime·Gemini Live·AWS 분리형을 모두 시험하기로 했다. 보관 일수를 아직 확인하지 못한 후보는 합성 대화·개발자 본인 음성(DEC-016)에 한해 학습 금지(유료 티어·옵트아웃·데이터 공유 미사용)를 확인한 경우에만 시험하도록 DEC-025의 음성 전달 금지를 유예한다. 실제 사용자 음성에는 DEC-025를 그대로 적용한다. OpenAI 비용이 과도하면 보관 상한 완화를 논의하기로 했으나 완화 한도·비용 기준·사용자 고지는 미정이며 상한 변경은 채택하지 않았다(DEC-025 구체화, DEC-050 후속).
+후속: 로컬 시험의 학습 금지 전제는 DEC-056이 대체하며 실제 사용자 조건은 유지한다.
+
+2026-10-26 · Partially Superseded — 사용자가 스모크에서 OpenAI Realtime·Gemini Live·AWS 분리형을 모두 시험하기로 했다. 보관 일수를 아직 확인하지 못한 후보는 합성 대화·개발자 본인 음성(DEC-016)에 한해 학습 금지(유료 티어·옵트아웃·데이터 공유 미사용)를 확인한 경우에만 시험하도록 DEC-025의 음성 전달 금지를 유예한다. 실제 사용자 음성에는 DEC-025를 그대로 적용한다. OpenAI 비용이 과도하면 보관 상한 완화를 논의하기로 했으나 완화 한도·비용 기준·사용자 고지는 미정이며 상한 변경은 채택하지 않았다(DEC-025 구체화, DEC-050 후속).
 
 <a id="dec-053"></a>
 
 ### DEC-053 · 저가형 분리형 추가와 저렴한 순 시험
 
-2026-10-26 · Accepted — 사용자가 AWS 분리형을 후보에서 제외하고 저가형 분리형(음성 인식·텍스트 모델·음성 합성을 저비용 서비스로 조합)을 추가했다. 스모크는 비용이 낮은 순서(저가형 분리형 → Gemini Live → OpenAI Realtime)로 진행하며 저렴한 후보가 성능 기준을 충족하면 더 비싼 후보를 쓸 이유가 없다는 판단이다. 구성 모델·성능 기준·예산 배분은 미정이다. DEC-052의 학습 금지 확인 전제와 합성·본인 음성 한정은 유지한다(DEC-050 구체화, 근거는 [후보 평가 계획 초안](docs/proposals/ai-candidate-evaluation-plan.md)). 시험 범위는 DEC-054가 구체화했다.
+후속: 시험 선행 순서는 DEC-055, 로컬 시험 학습 조건은 DEC-056이 대체한다.
+
+2026-10-26 · Partially Superseded — 사용자가 AWS 분리형을 후보에서 제외하고 저가형 분리형(음성 인식·텍스트 모델·음성 합성을 저비용 서비스로 조합)을 추가했다. 스모크는 비용이 낮은 순서(저가형 분리형 → Gemini Live → OpenAI Realtime)로 진행하며 저렴한 후보가 성능 기준을 충족하면 더 비싼 후보를 쓸 이유가 없다는 판단이다. 구성 모델·성능 기준·예산 배분은 미정이다. DEC-052의 학습 금지 확인 전제와 합성·본인 음성 한정은 유지한다(DEC-050 구체화, 근거는 [후보 평가 계획 초안](docs/proposals/ai-candidate-evaluation-plan.md)). 시험 범위는 DEC-054가 구체화했다.
 
 <a id="dec-054"></a>
 
 ### DEC-054 · 구성 요소별 교체 시험과 직접 청취 평가
 
-2026-10-26 · Accepted — 사용자가 저가형 분리형을 음성 인식·텍스트 모델·음성 합성 각 2~3개 후보로 두고 한 요소씩 바꿔 시험하기로 했다. 성능 기준은 사전에 수치로 정하지 않고 사용자가 직접 말하고 들으며 정한다. Gemini Live와 OpenAI Realtime도 각각 한 번 이상 시험하고 모든 시험 뒤 최종 결정한다. 저렴한 후보가 충족하면 상위 후보 시험을 생략할 수 있다는 DEC-053의 전제는 이 결정으로 대체하고, 시험 순서는 비용이 낮은 순서를 유지한다. 후보 모델 확정과 예산 배분은 계획 초안의 제안이며 미승인이다. DEC-052의 학습 금지 확인 전제와 합성·본인 음성 한정은 유지한다(DEC-053 구체화).
+후속: 비교를 제품 통합보다 먼저 수행하는 순서는 DEC-055로 대체한다.
+
+2026-10-26 · Partially Superseded — 사용자가 저가형 분리형을 음성 인식·텍스트 모델·음성 합성 각 2~3개 후보로 두고 한 요소씩 바꿔 시험하기로 했다. 성능 기준은 사전에 수치로 정하지 않고 사용자가 직접 말하고 들으며 정한다. Gemini Live와 OpenAI Realtime도 각각 한 번 이상 시험하고 모든 시험 뒤 최종 결정한다. 저렴한 후보가 충족하면 상위 후보 시험을 생략할 수 있다는 DEC-053의 전제는 이 결정으로 대체하고, 시험 순서는 비용이 낮은 순서를 유지한다. 후보 모델 확정과 예산 배분은 계획 초안의 제안이며 미승인이다. DEC-052의 학습 금지 확인 전제와 합성·본인 음성 한정은 유지한다(DEC-053 구체화).
+
+<a id="dec-055"></a>
+
+### DEC-055 · Gemini Live 우선 E2E와 음성 포트·어댑터
+
+2026-10-27 · Accepted — 사용자가 Gemini Live로 앱 E2E를 먼저 연결한 뒤 모델을 비교하고, 한 앱 안의 음성 포트·공급자 어댑터로 구현하며 필요 시 음성 구현을 별도 서버로 옮기는 방향에 “그래 그렇게 진행하자”라고 동의했다. 초기 연결 준비와 운영 복잡성을 줄이며 분리형 전환 시 STT·LLM·TTS 연결/중단 처리는 추가 구현한다. DEC-053/054의 비교 선행 순서와 TASKS의 D-03 완료 후 B-09 착수 조건을 이 로컬 통합에 한해 대체하며 최종 모델 선택·공개 배포·MSA 채택을 뜻하지 않는다.
 
 ## 기록·변경 규칙
 

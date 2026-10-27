@@ -1,15 +1,15 @@
 export type LearningState = "conversation" | "retry";
-export type Phase = "ready" | "waiting" | LearningState | "paused" | "ended";
+export type LearningPhase = "ready" | "waiting" | LearningState | "paused" | "ended";
 
 export interface Turn {
-  id: string;
+  turnId: string;
   requestId: string;
   role: "user" | "assistant";
   text: string;
 }
 
 export interface Correction {
-  id: string;
+  correctionId: string;
   sourceTurnId: string;
   deliveredTurnId: string;
   replacement: string;
@@ -17,18 +17,18 @@ export interface Correction {
   attempts: { turnId: string; outcome: "success" | "failure" }[];
 }
 
-export interface Reply {
+export interface LearningReply {
   text: string;
-  learning: LearningState;
+  learningState: LearningState;
   correction?: { replacement: string; explanation: string };
   retryOutcome?: "success" | "failure";
 }
 
-export interface Request {
-  sessionId: string;
+export interface LearningRequest {
+  learningSessionId: string;
   requestId: string;
   text?: string;
-  learning: LearningState;
+  learningState: LearningState;
   turns: readonly Turn[];
   corrections: readonly Correction[];
 }
@@ -43,7 +43,7 @@ export interface NoteItem {
 }
 
 export interface Note {
-  date: string;
+  learningEndDateKst: string;
   evidence: { turnId: string; text: string }[];
   items: NoteItem[];
 }
@@ -56,32 +56,43 @@ export interface NoteRequest {
 }
 
 // Text prototype contract. Streaming/cancellation/playback events are still needed for voice.
-export interface Provider {
-  respond(request: Request): Promise<Reply>;
+export interface LearningProvider {
+  respond(request: LearningRequest): Promise<LearningReply>;
   createNote(request: NoteRequest): Promise<Note>;
 }
 
-export interface Metric {
+export interface LearningMetric {
   requestId: string;
   event: "transition" | "response" | "note";
-  from: Phase;
-  to: Phase;
+  from: LearningPhase;
+  to: LearningPhase;
   result: "ok" | "failed" | "ignored";
   elapsedMs: number;
 }
 
-export interface Session {
-  gaps?: boolean;
-  sessionId: string;
-  phase: Phase;
-  learning: LearningState;
+export type ClientNoteGenerationStatus = "idle" | "loading" | "ready" | "failed" | "empty";
+
+export interface LearningSessionState {
+  hasConversationGaps?: boolean;
+  learningSessionId: string;
+  phase: LearningPhase;
+  learningState: LearningState;
   turns: readonly Turn[];
   corrections: readonly Correction[];
-  pending?: Request;
+  pending?: LearningRequest;
   lastConfirmedTurnId?: string;
   endedAt?: string;
-  noteStatus: "idle" | "loading" | "ready" | "failed" | "empty";
+  noteGenerationStatus: ClientNoteGenerationStatus;
   note?: Note;
-  message: string;
-  metrics: readonly Metric[];
+  statusMessage: string;
+  metrics: readonly LearningMetric[];
+}
+
+export type ConversationSnapshot = Pick<LearningSessionState, "turns" | "corrections" | "learningState"> & { hasConversationGaps?: boolean };
+
+// Browser-safe response fields; no credentials, database rows or server imports.
+export interface LearningRecordsResponse {
+  emailAddress: string;
+  notes: { learningEndDateKst: string; noteMarkdown: string }[];
+  sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string }[];
 }

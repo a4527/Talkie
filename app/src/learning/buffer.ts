@@ -9,7 +9,7 @@ export function boundRecords(turns: readonly Turn[], corrections: readonly Corre
     const requestId = kept[0].requestId;
     removed.push(requestId);
     kept = kept.filter(t => t.requestId !== requestId);
-    const ids = new Set(kept.map(t => t.id));
+    const ids = new Set(kept.map(t => t.turnId));
     // If any evidence of a correction unit is removed, discard that entire unit.
     selected = selected.filter(c => ids.has(c.sourceTurnId) && ids.has(c.deliveredTurnId) && c.attempts.every(a => ids.has(a.turnId)));
     dropped = true;

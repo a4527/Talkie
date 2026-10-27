@@ -26,9 +26,9 @@ class LedgerError(Exception):
 
 
 @dataclass
-class Entry:
-    id: int
-    ts: str
+class LedgerEntry:
+    entry_id: int
+    reserved_at: str
     config_id: str
     reserved_krw: int
     status: str  # "reserved" | "settled"
@@ -44,13 +44,21 @@ class Ledger:
         self.path = path
         self.round_cap_krw = round_cap_krw
         self.total_cap_krw = total_cap_krw
-        self.entries: list[Entry] = self._load()
+        self.entries: list[LedgerEntry] = self._load()
 
-    def _load(self) -> list[Entry]:
+    def _load(self) -> list[LedgerEntry]:
         if not self.path.exists():
             return []
         raw = json.loads(self.path.read_text(encoding="utf-8"))
-        return [Entry(**item) for item in raw.get("entries", [])]
+        entries = []
+        for item in raw.get("entries", []):
+            item = dict(item)
+            if "entry_id" not in item:
+                item["entry_id"] = item.pop("id")
+            if "reserved_at" not in item:
+                item["reserved_at"] = item.pop("ts")
+            entries.append(LedgerEntry(**item))
+        return entries
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,39 +73,39 @@ class Ledger:
             Path(tmp).unlink(missing_ok=True)
             raise
 
-    def spent_krw(self) -> int:
+    def committed_krw(self) -> int:
         return sum(e.counted_krw for e in self.entries)
 
     def remaining_krw(self) -> int:
-        return min(self.round_cap_krw, self.total_cap_krw) - self.spent_krw()
+        return min(self.round_cap_krw, self.total_cap_krw) - self.committed_krw()
 
     def reserve(self, config_id: str, krw: int) -> int:
         """최대 비용을 예약한다. 라운드 한도나 총 한도를 넘으면 예약하지 않고 예외를 던진다."""
         if krw <= 0:
             raise LedgerError("예약 금액은 0보다 커야 한다")
-        spent = self.spent_krw()
-        if spent + krw > self.round_cap_krw:
+        committed = self.committed_krw()
+        if committed + krw > self.round_cap_krw:
             raise LedgerError(
-                f"1라운드 한도 초과: 집행·예약 {spent}원 + 이번 최대 {krw}원 > {self.round_cap_krw}원"
+                f"1라운드 한도 초과: 집행·예약 {committed}원 + 이번 최대 {krw}원 > {self.round_cap_krw}원"
             )
-        if spent + krw > self.total_cap_krw:
+        if committed + krw > self.total_cap_krw:
             raise LedgerError(
-                f"총 한도 초과: 집행·예약 {spent}원 + 이번 최대 {krw}원 > {self.total_cap_krw}원"
+                f"총 한도 초과: 집행·예약 {committed}원 + 이번 최대 {krw}원 > {self.total_cap_krw}원"
             )
-        entry = Entry(
-            id=max((e.id for e in self.entries), default=0) + 1,
-            ts=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        entry = LedgerEntry(
+            entry_id=max((e.entry_id for e in self.entries), default=0) + 1,
+            reserved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             config_id=config_id,
             reserved_krw=krw,
             status="reserved",
         )
         self.entries.append(entry)
         self._save()
-        return entry.id
+        return entry.entry_id
 
     def settle(self, entry_id: int, actual_krw: int) -> None:
         for entry in self.entries:
-            if entry.id == entry_id:
+            if entry.entry_id == entry_id:
                 entry.status = "settled"
                 entry.actual_krw = actual_krw
                 self._save()
@@ -128,11 +136,11 @@ def _main() -> None:
     if args.command == "show":
         for entry in ledger.entries:
             actual = "-" if entry.actual_krw is None else f"{entry.actual_krw}원"
-            print(f"#{entry.id} {entry.ts} {entry.config_id:<20} 예약 {entry.reserved_krw:>6}원 {entry.status:<8} 실제 {actual}")
-        print(f"집행·예약 합계 {ledger.spent_krw()}원 / 1라운드 한도 {ledger.round_cap_krw}원 / 총 한도 {ledger.total_cap_krw}원 (남음 {ledger.remaining_krw()}원)")
+            print(f"#{entry.entry_id} {entry.reserved_at} {entry.config_id:<20} 예약 {entry.reserved_krw:>6}원 {entry.status:<8} 실제 {actual}")
+        print(f"집행·예약 합계 {ledger.committed_krw()}원 / 1라운드 한도 {ledger.round_cap_krw}원 / 총 한도 {ledger.total_cap_krw}원 (남음 {ledger.remaining_krw()}원)")
     else:
         ledger.settle(args.entry_id, args.actual_krw)
-        print(f"항목 {args.entry_id}를 {args.actual_krw}원으로 확정했다. 합계 {ledger.spent_krw()}원")
+        print(f"항목 {args.entry_id}를 {args.actual_krw}원으로 확정했다. 합계 {ledger.committed_krw()}원")
 
 
 if __name__ == "__main__":

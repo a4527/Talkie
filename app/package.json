@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
+    "voice:smoke": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/smoke-voice.ts",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run tests/learning.test.ts",
+    "test": "vitest run tests/learning.test.ts tests/voice.test.ts tests/voice-route.test.ts tests/naming-contracts.test.ts",
     "test:e2e": "playwright test --config tests/browser/playwright.config.ts",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; for (const path of ['.next', 'test-results', 'playwright-report', 'tsconfig.tsbuildinfo']) rmSync(path, { recursive: true, force: true });\"",
     "db:generate": "drizzle-kit generate --config drizzle.records.config.ts && drizzle-kit generate --config drizzle.transcripts.config.ts",

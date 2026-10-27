@@ -42,7 +42,7 @@ def main() -> None:
         mean_lat = f"{statistics.fmean(lats):.2f}" if lats else "-"
         print(f"{config_id:<20}{len(runs):>4}{mean_lat:>13}{reserved:>9}  {score_text}")
     ledger = open_ledger()
-    print(f"\n장부: 집행·예약 {ledger.spent_krw()}원 / 1라운드 한도 {ledger.round_cap_krw}원 / 총 한도 {ledger.total_cap_krw}원")
+    print(f"\n장부: 집행·예약 {ledger.committed_krw()}원 / 1라운드 한도 {ledger.round_cap_krw}원 / 총 한도 {ledger.total_cap_krw}원")
 
 
 if __name__ == "__main__":

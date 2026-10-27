@@ -52,7 +52,7 @@
 
 ## 확인 근거
 
-- 현재 정의: [지속 스키마](../../app/src/server/db/schema.ts), [임시 스키마](../../app/src/server/db/transcript-schema.ts)
+- 현재 정의: [지속 스키마](../../app/src/server/db/records-schema.ts), [임시 스키마](../../app/src/server/db/transcripts-schema.ts)
 - 동작: [인증](../../app/src/server/auth.ts), [저장·복원](../../app/src/server/learning.ts), [정리 실행기](../../app/src/server/maintenance.ts)
 - 기존 회귀 시험: [server.test.ts](../../app/tests/server.test.ts). 이번 검토에서는 실행하지 않았다.
 - 정책: [DECISIONS](../../DECISIONS.md), [현재 설계](../../design.md), [지속 작업 목록 ADR](../adr/028-durable-scheduled-work-list.md)

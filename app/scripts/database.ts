@@ -8,7 +8,7 @@ try {
     case "migrate": {
       const db = databases();
       await migrate(db.records, { migrationsFolder: resolve("drizzle/records") });
-      await migrate(db.temporary, { migrationsFolder: resolve("drizzle/transcripts") });
+      await migrate(db.transcripts, { migrationsFolder: resolve("drizzle/transcripts") });
       console.log("Both database migrations completed.");
       break;
     }

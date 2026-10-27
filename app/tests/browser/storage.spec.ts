@@ -22,7 +22,7 @@ test("email preview is harmless, confirmed login persists, saved learning and no
   // A scanner can fetch the link without consuming it or authenticating the browser.
   expect((await request.get(link)).ok()).toBe(true);
   expect((await request.get("/api/account")).status()).toBe(401);
-  const denied = await request.post("/api/account", { headers: { Origin: "https://outside.example" }, data: { action: "confirm", token: new URL(link).hash.slice(1) } });
+  const denied = await request.post("/api/account", { headers: { Origin: "https://outside.example" }, data: { action: "confirm", authLinkToken: new URL(link).hash.slice(1) } });
   expect(denied.status()).toBe(403);
   await page.goto(link);
   await expect(page.getByText(email, { exact: true })).toBeVisible();
@@ -51,6 +51,6 @@ test("email preview is harmless, confirmed login persists, saved learning and no
   await expect(page.getByText(`${email} 계정으로 로그인했습니다.`)).toBeVisible();
   await page.getByRole("button", { name: "로그아웃" }).click();
   await expect(page.getByRole("status")).toContainText("로그아웃했습니다");
-  expect((await request.get("/api/learning")).status()).toBe(401);
+  expect((await request.get("/api/learn")).status()).toBe(401);
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
 });

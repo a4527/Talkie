@@ -6,7 +6,7 @@
 
 ## 검토 범위와 판단 기준
 
-기준은 [지속 스키마](../../app/src/server/db/schema.ts), [임시 스키마](../../app/src/server/db/transcript-schema.ts), [인증](../../app/src/server/auth.ts), [학습 저장·복원](../../app/src/server/learning.ts), [정리 실행기](../../app/src/server/maintenance.ts), [수명 기록](../../app/src/server/db/transcript-lifecycle.ts), [브라우저 저장](../../app/src/app/learn/page.tsx)과 기존 마이그레이션·서버 시험이다. 실행 중 DB의 카탈로그·행 수·실행 계획은 조회하지 않았다. 따라서 실제 DB와 코드의 일치, 실제 병목·절감량은 미확인이다. 테스트도 이번 읽기 전용 검토에서 실행하지 않았다.
+기준은 [지속 스키마](../../app/src/server/db/records-schema.ts), [임시 스키마](../../app/src/server/db/transcripts-schema.ts), [인증](../../app/src/server/auth.ts), [학습 저장·복원](../../app/src/server/learning.ts), [정리 실행기](../../app/src/server/maintenance.ts), [수명 기록](../../app/src/server/db/transcripts-lifecycle.ts), [브라우저 저장](../../app/src/app/learn/page.tsx)과 기존 마이그레이션·서버 시험이다. 실행 중 DB의 카탈로그·행 수·실행 계획은 조회하지 않았다. 따라서 실제 DB와 코드의 일치, 실제 병목·절감량은 미확인이다. 테스트도 이번 읽기 전용 검토에서 실행하지 않았다.
 
 효율성은 테이블 수보다 수명 경계, 잘못된 관계를 DB가 차단하는지, 실제 조회 조건, 저장 중복과 반복 처리량으로 판단한다. DEC-028/034/035/048의 지속 작업·두 인스턴스·인증 저장·원문 수명 이력 경계와 PRD의 로그인/재개/보관/탈퇴 정책을 유지한다.
 

@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { databases, closeDatabases } from "../src/server/db";
-import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "../src/server/db/schema";
-import { transcriptSessionStates, transcriptSaves } from "../src/server/db/transcript-schema";
-import { deleteTranscriptSource } from "../src/server/db/transcript-lifecycle";
+import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "../src/server/db/records-schema";
+import { transcriptSessionStates, transcriptSaves } from "../src/server/db/transcripts-schema";
+import { deleteTranscriptSource } from "../src/server/db/transcripts-lifecycle";
 import { consumeLink, deleteAccount, digest, inspectLink, logout, requestLink, withIdentity, type Mail } from "../src/server/auth";
-import { endLearning, finishNote, heartbeat, listRecords, saveLearning, startLearning } from "../src/server/learning";
+import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
 import { boundRecords } from "../src/learning/buffer";
 import { execFileSync } from "node:child_process";
@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import * as schema from "../src/server/db/schema";
+import * as schema from "../src/server/db/records-schema";
 
 const mail: Mail[] = [];
 const capture = async (value: Mail) => { mail.push(value); };
@@ -35,10 +35,10 @@ async function login(email = "learner@example.test") {
   await requestLink(email, "login", undefined, capture);
   const result = await consumeLink(secret());
   assert.equal(result.purpose, "login");
-  return result.secret!;
+  return result.loginSessionToken!;
 }
-const record = (text = "synthetic private transcript marker") => ({ learning: "conversation", corrections: [],
-  turns: [{ id: "user-1", requestId: "request-1", role: "user", text }, { id: "assistant-1", requestId: "request-1", role: "assistant", text: "What happened next?" }] });
+const record = (text = "synthetic private transcript marker") => ({ learningState: "conversation", corrections: [],
+  turns: [{ turnId: "user-1", requestId: "request-1", role: "user", text }, { turnId: "assistant-1", requestId: "request-1", role: "assistant", text: "What happened next?" }] });
 
 describe("PostgreSQL authentication and isolated records", { concurrency: false }, () => {
   before(async () => {
@@ -47,12 +47,12 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
         "Use dedicated talkie_test_* databases; tests refuse ordinary databases.");
     }
     await migrate(databases().records, { migrationsFolder: "drizzle/records" });
-    await migrate(databases().temporary, { migrationsFolder: "drizzle/transcripts" });
+    await migrate(databases().transcripts, { migrationsFolder: "drizzle/transcripts" });
   });
   beforeEach(async () => {
     mail.length = 0;
     await databases().records.execute(sql`truncate users, email_auth_rate_limits, email_auth_requests cascade`);
-    await databases().temporary.delete(transcriptSessionStates);
+    await databases().transcripts.delete(transcriptSessionStates);
   });
   after(closeDatabases);
 
@@ -61,7 +61,7 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     const knownCreatedAt = new Date("2026-10-24T00:00:00Z");
     const knownDeletedAt = new Date("2026-10-24T01:00:00Z");
     const deadline = new Date("2026-10-25T00:00:00Z");
-    await databases().temporary.transaction(async tx => {
+    await databases().transcripts.transaction(async tx => {
       await tx.execute(sql`create schema test_transcript_migration`);
       await tx.execute(sql`set local search_path to test_transcript_migration`);
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0000_mysterious_shape.sql", "utf8").replaceAll('"public".', '"test_transcript_migration".')));
@@ -139,7 +139,7 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
 
   it("refuses to merge contradictory legacy live-source and deletion states", async () => {
     const id = randomUUID(), userId = randomUUID();
-    await assert.rejects(databases().temporary.transaction(async tx => {
+    await assert.rejects(databases().transcripts.transaction(async tx => {
       await tx.execute(sql`create schema test_invalid_source_migration`);
       await tx.execute(sql`set local search_path to test_invalid_source_migration`);
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0000_mysterious_shape.sql", "utf8").replaceAll('"public".', '"test_invalid_source_migration".')));
@@ -148,12 +148,12 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       await tx.execute(sql`insert into transcript_lifecycle(session_id,user_id,deleted_at,deletion_reason) values (${id},${userId},clock_timestamp(),'note_saved')`);
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0002_clear_session_state.sql", "utf8").replaceAll('"public".', '"test_invalid_source_migration".')));
     }), postgresFailure("P0001", "TRANSCRIPT_STATE_CONFLICT"));
-    assert.equal((await databases().temporary.execute(sql`select 1 from pg_namespace where nspname='test_invalid_source_migration'`)).rowCount, 0);
+    assert.equal((await databases().transcripts.execute(sql`select 1 from pg_namespace where nspname='test_invalid_source_migration'`)).rowCount, 0);
   });
 
   it("refuses to discard legacy source content that has no matching saved snapshot", async () => {
     const id = randomUUID(), userId = randomUUID();
-    await assert.rejects(databases().temporary.transaction(async tx => {
+    await assert.rejects(databases().transcripts.transaction(async tx => {
       await tx.execute(sql`create schema test_unpreserved_source_migration`);
       await tx.execute(sql`set local search_path to test_unpreserved_source_migration`);
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0000_mysterious_shape.sql", "utf8").replaceAll('"public".', '"test_unpreserved_source_migration".')));
@@ -161,14 +161,14 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0001_strong_warpath.sql", "utf8")));
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0002_clear_session_state.sql", "utf8").replaceAll('"public".', '"test_unpreserved_source_migration".')));
     }), postgresFailure("P0001", "TRANSCRIPT_INITIAL_CONTENT_NOT_PRESERVED"));
-    assert.equal((await databases().temporary.execute(sql`select 1 from pg_namespace where nspname='test_unpreserved_source_migration'`)).rowCount, 0);
+    assert.equal((await databases().transcripts.execute(sql`select 1 from pg_namespace where nspname='test_unpreserved_source_migration'`)).rowCount, 0);
   });
 
   it("does not create accounts on request/preview, stores hashes, consumes a link exactly once concurrently", async () => {
     await requestLink("learner@example.test", "login", undefined, capture);
     const link = secret();
     assert.equal((await databases().records.select().from(users)).length, 0);
-    assert.equal((await inspectLink(link)).email, "learner@example.test");
+    assert.equal((await inspectLink(link)).emailAddress, "learner@example.test");
     await inspectLink(link);
     const rows = await databases().records.select().from(emailAuthRequests);
     assert.equal(rows[0].authLinkTokenHash, digest(link));
@@ -202,90 +202,115 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     const raw = await login("a@example.test");
     await requestLink("b@example.test", "login", undefined, capture);
     await assert.rejects(consumeLink(secret(), raw), /LOGOUT_FIRST/);
-    assert.equal((await withIdentity(raw, async (_tx, who) => who.email)), "a@example.test");
+    assert.equal((await withIdentity(raw, async (_tx, who) => who.emailAddress)), "a@example.test");
   });
   it("enforces one connection, isolated ownership and idempotent/save-sequence-conflict saves", async () => {
     const raw = await login(), b = await login("b@example.test");
     const s = await startLearning(raw, "conversation");
     await assert.rejects(startLearning(raw, "conversation"), /ALREADY_CONNECTED/);
-    await saveLearning(raw, s.id, s.secret, 1, record());
-    await saveLearning(raw, s.id, s.secret, 1, record());
-    await assert.rejects(saveLearning(raw, s.id, s.secret, 1, record("changed")), /SAVE_SEQUENCE_CONFLICT/);
-    await assert.rejects(saveLearning(b, s.id, s.secret, 2, record()), /NOT_FOUND/);
-    assert.equal((await listRecords(b)).sessions.length, 0);
-    await heartbeat(raw, s.id, s.secret, true);
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
+    await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record("changed")), /SAVE_SEQUENCE_CONFLICT/);
+    await assert.rejects(saveLearning(b, s.learningSessionId, s.learningConnectionToken, 2, record()), /NOT_FOUND/);
+    assert.equal((await listLearningRecords(b)).sessions.length, 0);
+    await updateLearningHeartbeat(raw, s.learningSessionId, s.learningConnectionToken, true);
     const restored = await startLearning(raw, "conversation");
     assert.equal(restored.confirmedSaveSequenceNumber, 1);
     assert.equal(restored.conversationSnapshot.turns[0].text, record().turns[0].text);
-    await assert.rejects(saveLearning(raw, s.id, s.secret, 2, record()), /CONNECTION_EXPIRED/);
+    await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, record()), /CONNECTION_EXPIRED/);
   });
   it("keeps acknowledged history when the client window loses old turns and ignores unacknowledged saves on resume", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    await saveLearning(raw, s.id, s.secret, 1, record("old confirmed"));
-    const recent = { learning: "conversation", gaps: false, corrections: [], turns: [{ id: "user-2", requestId: "request-2", role: "user", text: "recent confirmed" }] };
-    await saveLearning(raw, s.id, s.secret, 2, recent);
-    await databases().temporary.insert(transcriptSaves).values({ learningSessionId: s.id, saveSequenceNumber: 3, snapshotHash: "unconfirmed", conversationSnapshot: record("must not restore") });
-    await heartbeat(raw, s.id, s.secret, true);
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record("old confirmed"));
+    const recent = { learningState: "conversation", hasConversationGaps: false, corrections: [], turns: [{ turnId: "user-2", requestId: "request-2", role: "user", text: "recent confirmed" }] };
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, recent);
+    await databases().transcripts.insert(transcriptSaves).values({ learningSessionId: s.learningSessionId, saveSequenceNumber: 3, snapshotHash: "unconfirmed", conversationSnapshot: record("must not restore") });
+    await updateLearningHeartbeat(raw, s.learningSessionId, s.learningConnectionToken, true);
     const restored = await startLearning(raw, "conversation");
     assert.deepEqual(restored.conversationSnapshot.turns.filter(t => t.role === "user").map(t => t.text), ["old confirmed", "recent confirmed"]);
   });
+  it("restores legacy JSON and replays its acknowledged sequence without changing bytes or hash", async () => {
+    const loginSessionToken = await login(), session = await startLearning(loginSessionToken, "conversation");
+    const legacy = {
+      turns: [{ id: "u-old", requestId: "r-old", role: "user", text: "Synthetic original" },
+        { id: "a-old", requestId: "r-old", role: "assistant", text: "Synthetic replacement" }],
+      corrections: [{ id: "c-old", sourceTurnId: "u-old", deliveredTurnId: "a-old", replacement: "Synthetic replacement", explanation: "Synthetic explanation", attempts: [] }],
+      learning: "retry", gaps: true,
+    };
+    const snapshotHash = digest(JSON.stringify(legacy));
+    await databases().transcripts.insert(transcriptSaves).values({ learningSessionId: session.learningSessionId, saveSequenceNumber: 1, conversationSnapshot: legacy, snapshotHash });
+    await databases().records.update(learningSessions).set({ confirmedSaveSequenceNumber: 1 }).where(eq(learningSessions.learningSessionId, session.learningSessionId));
+    const renamed = validateConversationSnapshot(legacy);
+    await saveLearning(loginSessionToken, session.learningSessionId, session.learningConnectionToken, 1, renamed);
+    await saveLearning(loginSessionToken, session.learningSessionId, session.learningConnectionToken, 1, legacy);
+    const [unchanged] = await databases().transcripts.select().from(transcriptSaves).where(eq(transcriptSaves.saveSequenceNumber, 1));
+    assert.equal(unchanged.snapshotHash, snapshotHash);
+    assert.deepEqual(unchanged.conversationSnapshot, legacy);
+    assert.deepEqual(encodeStoredConversationSnapshot(renamed), legacy);
+    await assert.rejects(saveLearning(loginSessionToken, session.learningSessionId, session.learningConnectionToken, 1, { ...renamed, hasConversationGaps: false }), /SAVE_SEQUENCE_CONFLICT/);
+    await updateLearningHeartbeat(loginSessionToken, session.learningSessionId, session.learningConnectionToken, true);
+    const resumed = await startLearning(loginSessionToken, "conversation");
+    assert.deepEqual(resumed.conversationSnapshot, renamed);
+    assert.equal(resumed.conversationSnapshot.corrections[0].correctionId, "c-old");
+  });
+
   it("preserves first end time, commits a bounded demo note before deleting source, rejects late writes", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    const [created] = await databases().temporary.select().from(transcriptSessionStates);
+    const [created] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.ok(created.transcriptStorageCreatedAt);
     assert.equal(created.firstNonemptySaveAt, null);
     assert.equal(created.sourceDeletedAt, null);
-    await saveLearning(raw, s.id, s.secret, 1, record("x".repeat(1000)));
-    const [stored] = await databases().temporary.select().from(transcriptSessionStates);
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record("x".repeat(1000)));
+    const [stored] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.ok(stored.firstNonemptySaveAt! >= created.transcriptStorageCreatedAt!);
-    await saveLearning(raw, s.id, s.secret, 1, record("x".repeat(1000)));
-    assert.deepEqual((await databases().temporary.select().from(transcriptSessionStates))[0], stored);
-    const end = await endLearning(raw, s.id, s.secret);
-    assert.equal((await endLearning(raw, s.id, s.secret)).learningSessionEndedAt, end.learningSessionEndedAt);
-    await finishNote(raw, s.id);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
-    const [deleted] = await databases().temporary.select().from(transcriptSessionStates);
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record("x".repeat(1000)));
+    assert.deepEqual((await databases().transcripts.select().from(transcriptSessionStates))[0], stored);
+    const end = await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+    assert.equal((await endLearning(raw, s.learningSessionId, s.learningConnectionToken)).learningSessionEndedAt, end.learningSessionEndedAt);
+    await completeLearningNote(raw, s.learningSessionId);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
+    const [deleted] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.ok(deleted.sourceDeletedAt! >= stored.firstNonemptySaveAt!);
     assert.equal(deleted.sourceDeletionReason, "note_saved");
     assert.equal(JSON.stringify(deleted).includes("x".repeat(100)), false);
-    await finishNote(raw, s.id);
+    await completeLearningNote(raw, s.learningSessionId);
     assert.equal((await maintenance()).failures, 0);
-    assert.deepEqual((await databases().temporary.select().from(transcriptSessionStates))[0], deleted);
+    assert.deepEqual((await databases().transcripts.select().from(transcriptSessionStates))[0], deleted);
     const saved = await databases().records.select().from(learningSessionNotes);
     assert.equal(saved.length, 1);
     assert.equal(saved[0].noteMarkdown.includes("x".repeat(161)), false);
-    await assert.rejects(saveLearning(raw, s.id, s.secret, 2, record()), /CONNECTION_EXPIRED/);
+    await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, record()), /CONNECTION_EXPIRED/);
   });
   it("rolls back source deletion if recording completion fails, then retries without inventing missing-source history", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    await saveLearning(raw, s.id, s.secret, 1, record());
-    await endLearning(raw, s.id, s.secret);
-    await databases().temporary.execute(sql`create function reject_test_deletion_audit() returns trigger language plpgsql as $$ begin if NEW.source_deleted_at is not null then raise exception 'SIMULATED_AUDIT_FAILURE'; end if; return NEW; end $$`);
-    await databases().temporary.execute(sql`create trigger reject_test_deletion_audit before update on transcript_session_states for each row execute function reject_test_deletion_audit()`);
-    try { await assert.rejects(finishNote(raw, s.id)); }
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
+    await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+    await databases().transcripts.execute(sql`create function reject_test_deletion_audit() returns trigger language plpgsql as $$ begin if NEW.source_deleted_at is not null then raise exception 'SIMULATED_AUDIT_FAILURE'; end if; return NEW; end $$`);
+    await databases().transcripts.execute(sql`create trigger reject_test_deletion_audit before update on transcript_session_states for each row execute function reject_test_deletion_audit()`);
+    try { await assert.rejects(completeLearningNote(raw, s.learningSessionId)); }
     finally {
-      await databases().temporary.execute(sql`drop trigger reject_test_deletion_audit on transcript_session_states`);
-      await databases().temporary.execute(sql`drop function reject_test_deletion_audit()`);
+      await databases().transcripts.execute(sql`drop trigger reject_test_deletion_audit on transcript_session_states`);
+      await databases().transcripts.execute(sql`drop function reject_test_deletion_audit()`);
     }
     assert.equal((await databases().records.select().from(learningSessionNotes)).length, 1);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 2);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 2);
-    assert.equal((await databases().temporary.select().from(transcriptSessionStates))[0].sourceDeletedAt, null);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 2);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 2);
+    assert.equal((await databases().transcripts.select().from(transcriptSessionStates))[0].sourceDeletedAt, null);
     assert.equal((await maintenance()).failures, 0);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
-    assert.equal((await databases().temporary.select().from(transcriptSessionStates))[0].sourceDeletionReason, "note_saved");
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSessionStates))[0].sourceDeletionReason, "note_saved");
     const missing = randomUUID();
     await deleteTranscriptSource(missing, "deadline_expired");
-    assert.equal((await databases().temporary.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, missing))).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, missing))).length, 0);
   });
   it("keeps unknown legacy creation and first-save times unknown after later writes", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    await databases().temporary.update(transcriptSessionStates).set({ transcriptStorageCreatedAt: null });
-    await saveLearning(raw, s.id, s.secret, 1, record());
-    await endLearning(raw, s.id, s.secret);
-    await finishNote(raw, s.id);
-    const [legacy] = await databases().temporary.select().from(transcriptSessionStates);
+    await databases().transcripts.update(transcriptSessionStates).set({ transcriptStorageCreatedAt: null });
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
+    await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+    await completeLearningNote(raw, s.learningSessionId);
+    const [legacy] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.equal(legacy.transcriptStorageCreatedAt, null);
     assert.equal(legacy.firstNonemptySaveAt, null);
     assert.ok(legacy.sourceDeletedAt);
@@ -293,26 +318,26 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
   });
   it("recovers a temporary-only commit without losing acknowledged state or duplicating the retried save", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    await saveLearning(raw, s.id, s.secret, 1, record());
-    const next = { ...record(), turns: [...record().turns, { id: "user-2", requestId: "request-2", role: "user", text: "new synthetic answer" }] };
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
+    const next = { ...record(), turns: [...record().turns, { turnId: "user-2", requestId: "request-2", role: "user", text: "new synthetic answer" }] };
     await databases().records.execute(sql`create function reject_test_confirmation() returns trigger language plpgsql as $$ begin if NEW.confirmed_save_sequence_number = 2 then raise exception 'SIMULATED_CONFIRM_FAILURE'; end if; return NEW; end $$`);
     await databases().records.execute(sql`create trigger reject_test_confirmation before update on learning_sessions for each row execute function reject_test_confirmation()`);
-    try { await assert.rejects(saveLearning(raw, s.id, s.secret, 2, next)); }
+    try { await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, next)); }
     finally {
       await databases().records.execute(sql`drop trigger reject_test_confirmation on learning_sessions`);
       await databases().records.execute(sql`drop function reject_test_confirmation()`);
     }
     assert.equal((await databases().records.select().from(learningSessions))[0].confirmedSaveSequenceNumber, 1);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).some(v => v.saveSequenceNumber === 2), true);
-    await heartbeat(raw, s.id, s.secret, true);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).some(v => v.saveSequenceNumber === 2), true);
+    await updateLearningHeartbeat(raw, s.learningSessionId, s.learningConnectionToken, true);
     const resumed = await startLearning(raw, "conversation");
     assert.equal(resumed.conversationSnapshot.turns.length, 2);
-    await saveLearning(raw, s.id, resumed.secret, 2, next);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).filter(v => v.saveSequenceNumber === 2).length, 1);
+    await saveLearning(raw, s.learningSessionId, resumed.learningConnectionToken, 2, next);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).filter(v => v.saveSequenceNumber === 2).length, 1);
   });
   it("requires deletion recheck in the original session, blocks all sessions immediately and removes source on maintenance", async () => {
     const a = await login(), s = await startLearning(a, "conversation");
-    await saveLearning(a, s.id, s.secret, 1, record());
+    await saveLearning(a, s.learningSessionId, s.learningConnectionToken, 1, record());
     await databases().records.update(emailAuthRateLimits).set({ lastAuthEmailRequestedAt: new Date(Date.now() - 31_000) });
     const b = await login();
     await databases().records.update(emailAuthRateLimits).set({ lastAuthEmailRequestedAt: new Date(Date.now() - 31_000) });
@@ -322,11 +347,11 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     await consumeLink(link, a);
     await deleteAccount(a);
     await assert.rejects(withIdentity(b, async () => {}), /LOGIN_REQUIRED/);
-    await assert.rejects(saveLearning(a, s.id, s.secret, 2, record()), /LOGIN_REQUIRED/);
+    await assert.rejects(saveLearning(a, s.learningSessionId, s.learningConnectionToken, 2, record()), /LOGIN_REQUIRED/);
     await maintenance();
     assert.equal((await databases().records.select().from(users)).length, 0);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
-    assert.equal((await databases().temporary.select().from(transcriptSessionStates)).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSessionStates)).length, 0);
   });
   it("expires and consumes deletion authority independently of a valid login", async () => {
     const raw = await login();
@@ -359,33 +384,33 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
 
   it("serializes deletion against a concurrent save and retains a tombstone that blocks later writes", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    await saveLearning(raw, s.id, s.secret, 1, record());
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
     const results = await Promise.allSettled([
-      deleteTranscriptSource(s.id, "deadline_expired"),
-      saveLearning(raw, s.id, s.secret, 2, record()),
+      deleteTranscriptSource(s.learningSessionId, "deadline_expired"),
+      saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, record()),
     ]);
     assert.equal(results[0].status, "fulfilled");
     if (results[1].status === "rejected") assert.match(results[1].reason.message, /SESSION_CLOSED/);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
-    const [deleted] = await databases().temporary.select().from(transcriptSessionStates);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
+    const [deleted] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.ok(deleted.sourceDeletedAt);
-    await assert.rejects(saveLearning(raw, s.id, s.secret, 2, record()), /SESSION_CLOSED/);
-    await deleteTranscriptSource(s.id, "note_saved");
-    assert.deepEqual((await databases().temporary.select().from(transcriptSessionStates))[0], deleted);
+    await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, record()), /SESSION_CLOSED/);
+    await deleteTranscriptSource(s.learningSessionId, "note_saved");
+    assert.deepEqual((await databases().transcripts.select().from(transcriptSessionStates))[0], deleted);
   });
 
   it("rejects mismatched owners, duplicate account jobs and invalid state values in the database", async () => {
     const raw = await login(), other = await login("other@example.test"), s = await startLearning(raw, "conversation");
     const otherUserId = await withIdentity(other, async (_tx, who) => who.userId);
     const userId = await withIdentity(raw, async (_tx, who) => who.userId);
-    await assert.rejects(databases().records.insert(learningSessionNotes).values({ learningSessionId: s.id, userId: otherUserId, learningEndDateKst: "2026-10-25", noteMarkdown: "Synthetic", noteRetentionExpiresAt: new Date() }), postgresFailure("23503", "learning_note_session_owner"));
-    await assert.rejects(databases().records.insert(scheduledJobs).values({ targetUserId: otherUserId, targetLearningSessionId: s.id, jobType: "note", scheduledRunAt: new Date() }), postgresFailure("23503", "scheduled_job_session_owner"));
+    await assert.rejects(databases().records.insert(learningSessionNotes).values({ learningSessionId: s.learningSessionId, userId: otherUserId, learningEndDateKst: "2026-10-25", noteMarkdown: "Synthetic", noteRetentionExpiresAt: new Date() }), postgresFailure("23503", "learning_note_session_owner"));
+    await assert.rejects(databases().records.insert(scheduledJobs).values({ targetUserId: otherUserId, targetLearningSessionId: s.learningSessionId, jobType: "note", scheduledRunAt: new Date() }), postgresFailure("23503", "scheduled_job_session_owner"));
     await databases().records.insert(scheduledJobs).values({ targetUserId: userId, jobType: "delete_account", scheduledRunAt: new Date() });
     await assert.rejects(databases().records.insert(scheduledJobs).values({ targetUserId: userId, jobType: "delete_account", scheduledRunAt: new Date() }), postgresFailure("23505", "scheduled_account_job_target"));
     await assert.rejects(databases().records.update(learningSessions).set({ learningSessionStatus: "unknown" }), postgresFailure("23514", "learning_session_status"));
     await assert.rejects(databases().records.update(learningSessions).set({ confirmedSaveSequenceNumber: -1 }), postgresFailure("23514", "confirmed_save_sequence_nonnegative"));
-    await assert.rejects(databases().temporary.update(transcriptSessionStates).set({ sourceDeletedAt: new Date() }), postgresFailure("23514", "transcript_source_deletion_pair"));
-    await assert.rejects(databases().temporary.update(transcriptSaves).set({ saveSequenceNumber: -1 }), postgresFailure("23514", "transcript_save_sequence_nonnegative"));
+    await assert.rejects(databases().transcripts.update(transcriptSessionStates).set({ sourceDeletedAt: new Date() }), postgresFailure("23514", "transcript_source_deletion_pair"));
+    await assert.rejects(databases().transcripts.update(transcriptSaves).set({ saveSequenceNumber: -1 }), postgresFailure("23514", "transcript_save_sequence_nonnegative"));
   });
 
   it("auto-closes after interruption, does not generate empty notes and removes expired source on the original deadline", async () => {
@@ -395,9 +420,9 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     const [closed] = await databases().records.select().from(learningSessions);
     assert.equal(closed.learningSessionStatus, "ended"); assert.equal(closed.noteGenerationStatus, "empty");
     assert.equal((await databases().records.select().from(learningSessionNotes)).length, 0);
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
     assert.ok(closed.transcriptDeleteDeadlineAt!.getTime() - closed.learningSessionEndedAt!.getTime() === 86_400_000);
-    const [lifecycle] = await databases().temporary.select().from(transcriptSessionStates);
+    const [lifecycle] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.ok(lifecycle.transcriptStorageCreatedAt);
     assert.equal(lifecycle.firstNonemptySaveAt, null);
     assert.ok(lifecycle.sourceDeletedAt);
@@ -416,36 +441,36 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
   });
   it("keeps final-save retries alive while the browser is connected, then deletes source at the first end deadline", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
-    await saveLearning(raw, s.id, s.secret, 1, record());
-    await endLearning(raw, s.id, s.secret);
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
+    await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
     await databases().records.update(scheduledJobs).set({ scheduledRunAt: new Date(Date.now() - 60_000) });
     await maintenance();
     assert.equal((await databases().records.select().from(learningSessions))[0].noteGenerationStatus, "waiting_save");
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 2);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 2);
     await databases().records.update(learningSessions).set({ learningConnectionExpiresAt: new Date(Date.now() - 60_000) });
-    await heartbeat(raw, s.id, s.secret); // Closing retry owner can reconnect until its original erase deadline.
+    await updateLearningHeartbeat(raw, s.learningSessionId, s.learningConnectionToken); // Closing retry owner can reconnect until its original erase deadline.
     await databases().records.update(learningSessions).set({ transcriptDeleteDeadlineAt: new Date(Date.now() - 1) });
-    await assert.rejects(saveLearning(raw, s.id, s.secret, 2, record()), /SESSION_CLOSED/);
+    await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, record()), /SESSION_CLOSED/);
     await maintenance();
-    assert.equal((await databases().temporary.select().from(transcriptSaves)).length, 0);
+    assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
     assert.equal((await databases().records.select().from(learningSessions))[0].noteGenerationStatus, "expired");
-    const [lifecycle] = await databases().temporary.select().from(transcriptSessionStates);
+    const [lifecycle] = await databases().transcripts.select().from(transcriptSessionStates);
     assert.ok(lifecycle.firstNonemptySaveAt);
     assert.ok(lifecycle.sourceDeletedAt);
     assert.equal(lifecycle.sourceDeletionReason, "deadline_expired");
   });
   it("bounds whole request units, keeping recent content without partially retaining correction evidence", () => {
-    const turns = Array.from({ length: 8 }, (_, i) => ({ id: `t-${i}`, requestId: `r-${Math.floor(i / 2)}`, role: i % 2 ? "assistant" as const : "user" as const, text: "x".repeat(200) }));
+    const turns = Array.from({ length: 8 }, (_, i) => ({ turnId: `t-${i}`, requestId: `r-${Math.floor(i / 2)}`, role: i % 2 ? "assistant" as const : "user" as const, text: "x".repeat(200) }));
     const bounded = boundRecords(turns, [], 1100);
     assert.ok(bounded.dropped);
     assert.equal(bounded.turns[0].role, "user");
-    assert.equal(bounded.turns.at(-1)!.id, "t-7");
+    assert.equal(bounded.turns.at(-1)!.turnId, "t-7");
     assert.ok(new TextEncoder().encode(JSON.stringify({ turns: bounded.turns, corrections: [] })).length <= 1100);
   });
   it("backs up only durable records and invalidates authentication after a real PostgreSQL restore", { skip: !process.env.PG_BIN_DIR }, async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
     const marker = `TRANSCRIPT_ONLY_${randomUUID()}`;
-    await saveLearning(raw, s.id, s.secret, 1, record(marker));
+    await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record(marker));
     const folder = mkdtempSync(join(tmpdir(), "talkie-synthetic-backup-"));
     const source = new URL(process.env.DATABASE_URL!);
     const restoreName = "talkie_test_restore_" + randomUUID().replaceAll("-", "");

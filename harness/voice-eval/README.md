@@ -81,3 +81,5 @@ uv run python -m voice_eval.ledger settle <항목 번호> <실제 원화 금액>
 | `voice_eval/ledger.py`, `results.py`, `rate.py`, `report.py` | 장부, 기록, 점수, 요약 |
 
 사용 중인 Pipecat은 1.14.0이다. 파이프라인 구성은 설치본의 공식 CLI 템플릿(`bot_cascade`, `bot_realtime`)을 따랐다.
+
+예산 장부의 `committed_krw()`는 확정액과 진행 중 예약액의 합이다. 장부 필드는 `entry_id`·`reserved_at`, 결과 필드는 `ledger_entry_id`·`recorded_at`이며 기존 이름의 파일도 읽는다. 읽기만으로 원본을 변경하지 않고 장부 갱신 시 기존 ID·금액·예약 시각을 보존한다. 결과의 기존 시각을 기준으로 7일 정리하며 이름 변경으로 예산이나 보관 기한을 초기화하지 않는다.

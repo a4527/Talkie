@@ -86,7 +86,7 @@ def check(matrix: Matrix, cfg: SessionConfig) -> int:
     print(f"  세션 상한 {cfg.session_seconds}초 최대 비용(안전계수 {matrix.safety_factor}): ${estimate.total_usd:.3f} (약 {krw}원)")
     for note in estimate.notes:
         print(f"  주의: {note}")
-    print(f"  집행·예약 {ledger.spent_krw()}원, 1라운드 한도 {ledger.round_cap_krw}원, 남음 {ledger.remaining_krw()}원")
+    print(f"  집행·예약 {ledger.committed_krw()}원, 1라운드 한도 {ledger.round_cap_krw}원, 남음 {ledger.remaining_krw()}원")
     if krw > ledger.remaining_krw():
         print("  남은 한도가 부족해 이 구성은 시작하지 않는다")
         return 1

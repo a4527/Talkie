@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { FakeProvider } from "../src/learning/fake-provider";
-import { buildNote, koreaDate, markdown, validateNote } from "../src/learning/note";
+import { buildNote, formatKstDate, renderNoteMarkdown, validateNote } from "../src/learning/note";
 import { LearningSession } from "../src/learning/session";
-import type { NoteRequest, Provider, Reply, Request } from "../src/learning/types";
+import type { NoteRequest, LearningProvider, LearningReply, LearningRequest } from "../src/learning/types";
 
 async function settled() { await new Promise(resolve => setTimeout(resolve, 5)); }
 function setup(scenario: "correction" | "conversation" = "correction") {
@@ -26,9 +26,9 @@ describe("first learning flow", () => {
     expect(state().phase).toBe("conversation");
     expect(state().corrections[0].attempts.map(a => a.outcome)).toEqual(["failure", "success"]);
     session.end(); await settled();
-    expect(state().noteStatus).toBe("ready");
+    expect(state().noteGenerationStatus).toBe("ready");
     expect(state().note!.evidence.map(e => e.text)).toEqual(["I go to a cafe yesterday.", "My first retry", "My second retry"]);
-    expect(markdown(state().note!)).toContain("시나리오 성공");
+    expect(renderNoteMarkdown(state().note!)).toContain("시나리오 성공");
   });
 
   it("rejects empty/duplicate submissions and duplicate starts; short answers do not end", async () => {
@@ -53,7 +53,7 @@ describe("first learning flow", () => {
     const requestId = state().pending!.requestId;
     await settled();
     expect(state().phase).toBe("paused");
-    expect(state().learning).toBe("retry");
+    expect(state().learningState).toBe("retry");
     expect(state().lastConfirmedTurnId).toBe(lastTurn);
     session.resume();
     expect(state().pending!.requestId).toBe(requestId);
@@ -85,15 +85,15 @@ describe("first learning flow", () => {
   });
 
   it("resumes while the old request is still in flight without duplicating delivery", async () => {
-    let resolve!: (reply: Reply) => void;
+    let resolve!: (reply: LearningReply) => void;
     let calls = 0;
-    const provider: Provider = {
+    const provider: LearningProvider = {
       respond: () => { calls++; return new Promise(r => { resolve = r; }); },
       createNote: async request => buildNote(request),
     };
     const session = new LearningSession(provider);
     session.start(); session.pause(); session.resume();
-    resolve({ text: "Question?", learning: "conversation" }); await settled();
+    resolve({ text: "Question?", learningState: "conversation" }); await settled();
     expect(calls).toBe(1);
     expect(session.getSnapshot().turns).toHaveLength(1);
   });
@@ -115,7 +115,7 @@ describe("first learning flow", () => {
   it("does not generate empty notes, including when an answer is still unconfirmed", async () => {
     const { session, state } = setup();
     session.start(); await settled(); session.send("Not confirmed"); session.end(); await settled();
-    expect(state().noteStatus).toBe("empty");
+    expect(state().noteGenerationStatus).toBe("empty");
     expect(state().note).toBeUndefined();
     session.resume(); expect(state().phase).toBe("ended");
   });
@@ -125,21 +125,21 @@ describe("first learning flow", () => {
     session.start(); await settled(); session.send("A real input"); await settled();
     provider.failNextNote = true;
     session.end(); await settled();
-    expect(state().noteStatus).toBe("failed");
+    expect(state().noteGenerationStatus).toBe("failed");
     expect(session.send("Cannot reopen")).toBe(false);
     const turns = state().turns;
     await Promise.all([session.generateNote(), session.generateNote()]);
-    expect(state().noteStatus).toBe("ready");
+    expect(state().noteGenerationStatus).toBe("ready");
     expect(state().turns).toBe(turns);
     expect(state().metrics.filter(m => m.event === "note")).toHaveLength(2);
-    expect(markdown(state().note!)).toContain("확인된 교정이 없습니다.");
+    expect(renderNoteMarkdown(state().note!)).toContain("확인된 교정이 없습니다.");
   });
 
   it("accepts a provider decision to continue even without a successful retry", async () => {
     const fake = new FakeProvider(); fake.delayMs = 0;
-    const provider: Provider = {
-      respond: request => request.learning === "retry"
-        ? Promise.resolve({ text: "Let's continue. What's next?", learning: "conversation" })
+    const provider: LearningProvider = {
+      respond: request => request.learningState === "retry"
+        ? Promise.resolve({ text: "Let's continue. What's next?", learningState: "conversation" })
         : fake.respond(request),
       createNote: request => fake.createNote(request),
     };
@@ -163,15 +163,15 @@ describe("first learning flow", () => {
   });
 
   it("uses the actual Korean end date and rejects invented note evidence", () => {
-    expect(koreaDate("2026-10-23T15:01:00Z")).toBe("2026-10-24");
+    expect(formatKstDate("2026-10-23T15:01:00Z")).toBe("2026-10-24");
     const request: NoteRequest = {
       requestId: "note", endedAt: "2026-10-23T15:01:00Z",
-      turns: [{ id: "u1", requestId: "r1", role: "user", text: "Literal <script>text</script>" }], corrections: [],
+      turns: [{ turnId: "u1", requestId: "r1", role: "user", text: "Literal <script>text</script>" }], corrections: [],
     };
     const note = buildNote(request);
     expect(validateNote(note, request)).toBe(true);
-    expect(markdown(note)).toContain("&lt;script&gt;");
-    expect(markdown(note)).not.toContain("<script>");
+    expect(renderNoteMarkdown(note)).toContain("&lt;script&gt;");
+    expect(renderNoteMarkdown(note)).not.toContain("<script>");
     expect(validateNote({ ...note, evidence: [{ turnId: "u1", text: "Invented" }] }, request)).toBe(false);
     expect(validateNote({ ...note, evidence: [] }, request)).toBe(false);
     expect(validateNote({ ...note, items: [{ sourceTurnId: "u1", original: "Literal <script>text</script>", deliveredTurnId: "a1", replacement: "Invented", explanation: "invented", attempts: [] }] }, request)).toBe(false);
@@ -179,13 +179,13 @@ describe("first learning flow", () => {
 
   it("fails safely when a provider returns notes unrelated to the confirmed transcript", async () => {
     const fake = new FakeProvider("conversation"); fake.delayMs = 0;
-    const provider: Provider = {
-      respond: (request: Request) => fake.respond(request),
+    const provider: LearningProvider = {
+      respond: (request: LearningRequest) => fake.respond(request),
       createNote: async request => ({ ...buildNote(request), evidence: [{ turnId: "fake", text: "invented" }] }),
     };
     const session = new LearningSession(provider);
     session.start(); await settled(); session.send("Answer"); await settled(); session.end(); await settled();
-    expect(session.getSnapshot().noteStatus).toBe("failed");
+    expect(session.getSnapshot().noteGenerationStatus).toBe("failed");
     expect(session.getSnapshot().phase).toBe("ended");
   });
 });

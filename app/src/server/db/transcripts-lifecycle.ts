@@ -1,14 +1,14 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { databases } from "./index";
-import { transcriptSessionStates, transcriptSaves } from "./transcript-schema";
+import { transcriptSessionStates, transcriptSaves } from "./transcripts-schema";
 
 export type TranscriptDeletionReason = "note_saved" | "no_user_turns" | "deadline_expired";
 
 // Save and delete lock the same state row. The tombstone survives normal source
 // deletion and blocks late writes; the content and completion commit atomically.
 export async function deleteTranscriptSource(learningSessionId: string, reason: TranscriptDeletionReason) {
-  await databases().temporary.transaction(async tx => {
+  await databases().transcripts.transaction(async tx => {
     const [state] = await tx.select().from(transcriptSessionStates)
       .where(eq(transcriptSessionStates.learningSessionId, learningSessionId)).for("update");
     if (!state || state.sourceDeletedAt) return;
@@ -21,9 +21,9 @@ export async function deleteTranscriptSource(learningSessionId: string, reason: 
   });
 }
 
-export function transcriptDeletionReason(noteStatus: string): TranscriptDeletionReason {
-  if (noteStatus === "ready") return "note_saved";
-  if (noteStatus === "empty") return "no_user_turns";
-  if (noteStatus === "expired") return "deadline_expired";
+export function transcriptDeletionReason(noteGenerationStatus: string): TranscriptDeletionReason {
+  if (noteGenerationStatus === "ready") return "note_saved";
+  if (noteGenerationStatus === "empty") return "no_user_turns";
+  if (noteGenerationStatus === "expired") return "deadline_expired";
   throw new Error("TRANSCRIPT_NOT_FINALIZED");
 }
