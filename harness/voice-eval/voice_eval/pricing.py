@@ -2,7 +2,7 @@
 
 실측이 아니라 보수적 가정이다. 단가 출처와 신뢰도는 PRICES의 source에 남긴다.
 공급자 가격은 자주 바뀌므로 호출 전에 공식 가격 페이지로 다시 확인한다.
-계획 초안: docs/proposals/ai-candidate-evaluation-plan.md
+계획 초안: docs/proposals/AI-CANDIDATE-EVALUATION-PLAN.md
 """
 
 from __future__ import annotations

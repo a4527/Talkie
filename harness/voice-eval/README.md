@@ -1,6 +1,6 @@
 # Talkie 음성 후보 시험 하니스
 
-제품 코드(`app/`)와 분리된 시험 전용 도구다. 음성 인식, 텍스트 모델, 음성 합성을 설정으로 바꿔 가며 직접 말하고 들어 비교하고, Gemini Live와 OpenAI Realtime을 참조로 시험한다. 근거와 후보는 [후보 평가 계획](../../docs/proposals/ai-candidate-evaluation-plan.md)(DEC-050·053·054), 키·결제는 [PROVIDERS.md](PROVIDERS.md)를 따른다.
+제품 코드(`app/`)와 분리된 시험 전용 도구다. 음성 인식, 텍스트 모델, 음성 합성을 설정으로 바꿔 가며 직접 말하고 들어 비교하고, Gemini Live와 OpenAI Realtime을 참조로 시험한다. 근거와 후보는 [후보 평가 계획](../../docs/proposals/AI-CANDIDATE-EVALUATION-PLAN.md)(DEC-050·053·054), 키·결제는 [PROVIDERS.md](../../docs/harness/voice-eval/PROVIDERS.md)를 따른다.
 
 시험 범위는 합성 대화와 **개발자 본인 음성**뿐이다. 실제 사용자 음성과 개인정보는 넣지 않는다(DEC-016, DEC-052).
 
@@ -8,7 +8,7 @@
 
 - Python 3.11~3.13과 [uv](https://docs.astral.sh/uv/)가 필요하다.
 - 설치: `cd harness/voice-eval && uv sync`
-- `.env.example`을 `.env`로 복사해 키를 채운다. 어떤 키가 필요한지와 발급·결제 절차는 [PROVIDERS.md](PROVIDERS.md)를 본다.
+- `.env.example`을 `.env`로 복사해 키를 채운다. 어떤 키가 필요한지와 발급·결제 절차는 [PROVIDERS.md](../../docs/harness/voice-eval/PROVIDERS.md)를 본다.
 
 ### 환경별 실행 위치
 

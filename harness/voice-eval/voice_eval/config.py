@@ -47,7 +47,7 @@ VENDOR_OF: dict[str, str] = {
 }
 
 # DEC-052: 학습 금지를 확인한 업체만 시험한다. 확인된 것은 "confirmed", 나머지는 사용자가 직접
-# 확인했다고 VOICE_EVAL_ACK에 적어야 시작한다. 근거는 docs/proposals/ai-candidate-evaluation-plan.md.
+# 확인했다고 VOICE_EVAL_ACK에 적어야 시작한다. 근거는 docs/proposals/AI-CANDIDATE-EVALUATION-PLAN.md.
 VENDOR_POLICY: dict[str, tuple[str, str]] = {
     "openai": ("confirmed", "서비스 계약 4.2와 데이터 문서. 데이터 공유 옵션을 켜지 않는다"),
     "anthropic": ("confirmed", "상업용 API는 기본적으로 학습에 쓰지 않는다. Development Partner Program에 참여하지 않는다"),

@@ -2,9 +2,9 @@
 
 한국어 화자를 위한 영어 회화 웹서비스 프로젝트입니다.
 
-제품 요구사항은 [PRD.md](PRD.md), 작업별 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
+제품 요구사항은 [PRD.md](docs/PRD.md), 작업별 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
 
-현재 구조·기술적 가정은 [design.md](design.md), 결정 상태·ADR은 [DECISIONS.md](DECISIONS.md), 측정·실험 방법은 [검증 설계](docs/design/engineering-validation.md)를 참고하세요.
+현재 구조·기술적 가정은 [DESIGN.md](docs/DESIGN.md), 결정 상태·ADR은 [DECISIONS.md](docs/DECISIONS.md), 측정·실험 방법은 [검증 설계](docs/design/ENGINEERING-VALIDATION.md)를 참고하세요.
 
 ## 첫 학습 흐름 실행
 
@@ -62,7 +62,7 @@ npm run dev
 
 [계정 화면](http://127.0.0.1:3000/account)에서 `learner@example.test` 같은 주소로 요청하고 [Mailpit](http://127.0.0.1:8025)에서 링크를 엽니다. 대상 이메일을 확인하고 버튼을 누른 브라우저에 로그인됩니다. 자동 재발송·실패 전용 재요청 버튼은 없으며 기존 화면에서 30초 뒤 다시 요청할 수 있습니다.
 
-명명 정리 후 학습 API는 `/api/learn`이다. 이전 코드로 열린 탭은 새로고침한다. 기존 DB JSON·해시·환경변수는 유지하므로 이번 변경을 위한 DB 이관은 필요하지 않다. 상세 계약은 [코드·API 명명과 저장 호환성](design.md#코드api-명명과-저장-호환성)을 따른다.
+명명 정리 후 학습 API는 `/api/learn`이다. 이전 코드로 열린 탭은 새로고침한다. 기존 DB JSON·해시·환경변수는 유지하므로 이번 변경을 위한 DB 이관은 필요하지 않다. 상세 계약은 [코드·API 명명과 저장 호환성](docs/design/API.md)을 따른다.
 
 [저장 학습 화면](http://127.0.0.1:3000/learn)은 확인 턴을 5초 간격으로 저장하고 새로고침 후 재개하며 중복 연결은 차단합니다. 연결 확인 15초·연결 유효 창 45초는 시험 초기값입니다. 메모리 창은 직렬화 기준 128 KiB/200턴으로 제한하고 미저장 단위가 빠지면 누락을 표시합니다. 이미 서버에 저장된 기록은 창 축소로 삭제하지 않습니다. 종료 후 저장이 성공하면 최근 사용자 발화 최대 세 개의 짧은 근거로 **가짜 노트**를 저장하고 임시 원문을 삭제합니다. 같은 한국 날짜의 노트는 파일 하나로 내려받습니다. 실제 AI의 선별·전체 P0 노트 형식·품질 완료를 뜻하지 않습니다.
 
@@ -109,7 +109,7 @@ ORDER BY transcript_storage_created_at DESC NULLS LAST;
 
 ## AI 후보 시험 하니스
 
-음성 인식·텍스트 모델·음성 합성 후보를 직접 말하고 들어 비교하는 시험 전용 도구는 제품 코드와 분리해 `harness/voice-eval/`에 있습니다. 설치와 실행은 [하니스 README](harness/voice-eval/README.md), 공급자별 키 발급·결제·환경변수는 [PROVIDERS.md](harness/voice-eval/PROVIDERS.md)를 따릅니다. 합성 대화와 본인 음성만 사용하며 실제 사용자 데이터는 넣지 않습니다.
+음성 인식·텍스트 모델·음성 합성 후보를 직접 말하고 들어 비교하는 시험 전용 도구는 제품 코드와 분리해 `harness/voice-eval/`에 있습니다. 설치와 실행은 [하니스 README](harness/voice-eval/README.md), 공급자별 키 발급·결제·환경변수는 [PROVIDERS.md](docs/harness/voice-eval/PROVIDERS.md)를 따릅니다. 합성 대화와 본인 음성만 사용하며 실제 사용자 데이터는 넣지 않습니다.
 
 ## 로컬 환경 변수와 커밋 점검
 
@@ -135,4 +135,4 @@ DEC-055/056의 개발자 본인·합성 대화용 시험이다. 현재 `/voice`�
 
 Google 무료 API는 제품 개선·학습과 사람 검토에 데이터를 사용할 수 있다. 개인정보·민감/기밀정보나 다른 사람의 기록을 넣지 않는다. 실제 사용자 연결에는 기존 학습 금지·최대 30일 정책이 유지된다. 직접 연결 토큰은 발급 후 최대 4분 유효하며 로그아웃/탈퇴 직후 이미 연결된 공급자 세션의 강제 종료는 아직 보장하지 않는다. 공개 배포하지 않는다.
 
-검증: `cd app` 후 `npm test`, `npm run typecheck`, `npm run test:e2e -- voice.spec.ts`. 브라우저 자동 시험은 가짜 WebSocket·마이크·토큰을 사용하며 실제 AI 품질·실제 장치 검증이 아니다. 무료 프로젝트 설정 후 `npm run voice:smoke`는 실제 공급자에 고정 합성 문장 한 번을 보내 연결·음성/전사 수신을 확인한다. 이는 API를 호출하는 명령이며 출력은 청크 수·바이트 수·수신 여부뿐이다. 장치·청취·저장/노트 E2E를 검증하지 않는다. 구조와 남은 계약은 [design](design.md#음성-포트어댑터-경계-dec-055)을 따른다.
+검증: `cd app` 후 `npm test`, `npm run typecheck`, `npm run test:e2e -- voice.spec.ts`. 브라우저 자동 시험은 가짜 WebSocket·마이크·토큰을 사용하며 실제 AI 품질·실제 장치 검증이 아니다. 무료 프로젝트 설정 후 `npm run voice:smoke`는 실제 공급자에 고정 합성 문장 한 번을 보내 연결·음성/전사 수신을 확인한다. 이는 API를 호출하는 명령이며 출력은 청크 수·바이트 수·수신 여부뿐이다. 장치·청취·저장/노트 E2E를 검증하지 않는다. 구조와 남은 계약은 [design](docs/design/VOICE.md#포트어댑터-경계)을 따른다.

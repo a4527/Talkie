@@ -19,7 +19,7 @@ def _key(provider: str) -> str:
     name = PROVIDER_ENV[provider]
     value = os.environ.get(name, "").strip()
     if not value:
-        raise ConfigError(f"환경변수 {name}가 비어 있다 (.env 확인, PROVIDERS.md 참고)")
+        raise ConfigError(f"환경변수 {name}가 비어 있다 (.env 확인, docs/harness/voice-eval/PROVIDERS.md 참고)")
     return value
 
 
