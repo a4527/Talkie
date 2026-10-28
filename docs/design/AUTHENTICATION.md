@@ -1,6 +1,6 @@
 # 인증 설계
 
-갱신일: 2026-10-28. 현재 구현은 루프백 환경과 합성 `.test` 이메일의 링크 인증이다. 로그인 유지·링크/탈퇴 기한·발송 정책의 기준은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)이며 이 문서는 이를 보장하는 구현 방법을 관리한다. [앱 직접 인증의 이유](../adr/026-APP-MANAGED-EMAIL-LINK-AUTHENTICATION.md)는 ADR에 둔다.
+갱신일: 2026-10-28. 현재 구현은 루프백 환경과 합성 `.test` 이메일의 링크 인증이다. 로그인 유지·링크/탈퇴 기한·발송 정책은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지), 앱 직접 인증의 채택 근거는 [ADR-026](../adr/026-APP-MANAGED-EMAIL-LINK-AUTHENTICATION.md)을 따른다.
 
 구현: [auth.ts](../../app/src/server/auth.ts), [HTTP·쿠키](../../app/src/server/http.ts), [이메일 입력 제한](../../app/src/server/config.ts), [확인 화면](../../app/src/app/account/confirm/page.tsx). HTTP 요청·응답은 [API](API.md#계정-api), 물리 테이블은 [DATABASE](DATABASE.md)를 따른다.
 

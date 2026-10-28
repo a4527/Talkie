@@ -2,9 +2,7 @@
 
 한국어 화자를 위한 영어 회화 웹서비스 프로젝트입니다.
 
-제품 요구사항은 [PRD.md](docs/PRD.md), 작업별 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
-
-현재 구조·기술적 가정은 [DESIGN.md](docs/DESIGN.md), 결정 상태·ADR은 [DECISIONS.md](docs/DECISIONS.md), 측정·실험 방법은 [검증 설계](docs/design/ENGINEERING-VALIDATION.md)를 참고하세요.
+작업별 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
 
 ## 첫 학습 흐름 실행
 

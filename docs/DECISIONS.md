@@ -1,8 +1,6 @@
 # Talkie 결정 목록
 
-중요 결정의 상태·ADR 링크와 짧은 결정을 관리한다. 현재 구조·규칙은 [DESIGN.md](DESIGN.md), 제품 요구사항과 상세 정책은 [PRD.md](PRD.md)가 기준이다. 기존 DEC ID·결정 상태·대체 관계는 유지하며 ADR 번호는 DEC 번호를 따른다.
-
-이 파일은 결정 목록과 작은 결정의 기록이며, ADR은 선택 이유·대안·승인한 절충의 기록이다. ADR이 있는 항목의 상세는 그 ADR에서만 관리한다. 문서별 책임과 중복 방지 기준은 [AGENTS](../AGENTS.md#document-ownership)를 따른다.
+중요 결정의 상태·ADR 링크와 짧은 결정을 관리한다. ADR 번호는 DEC 번호를 따른다.
 
 ## 중요 결정 · ADR 목록
 
@@ -31,6 +29,7 @@
 | `DEC-046` | 이메일 인증 브라우저·수명·백업 복원 후 무효화 | Partially Superseded | [ADR-046](adr/046-EMAIL-AUTHENTICATION-LIFECYCLE-AND-RESTORE.md) | DEC-020/026/035/036 구체화. 복원 후 재로그인의 이메일 한정은 DEC-057 후속으로 확대 |
 | `DEC-047` | 미저장 버퍼 상한에서 최근 완결 기록 우선 | Accepted | [ADR-047](adr/047-RETAIN-RECENT-UNSAVED-RECORDS-AT-BUFFER-LIMIT.md) | DEC-031/040의 상한 도달 시 기록 유지/포기 미정 계약 구체화 |
 | <a id="dec-049"></a>`DEC-049` | DB 명명과 로그인·원문 상태 통합 | Accepted | [ADR-049](adr/049-CLEAR-DATABASE-NAMES-AND-MERGED-SESSION-STATE.md) | DEC-020/034/035/036/046/048의 사용자·데이터 경계를 유지하고 저장 구조 구체화 |
+| `DEC-055` | Gemini Live 우선 E2E와 음성 포트·어댑터 | Accepted | [ADR-055](adr/055-GEMINI-LIVE-FIRST-E2E-AND-VOICE-PORT.md) | DEC-053/054의 비교 선행과 D-03 완료 후 B-09 착수 조건을 로컬 통합에 한해 대체 |
 | <a id="dec-056"></a>`DEC-056` | 비공개 로컬 시험의 공급자 학습 허용 | Accepted | [ADR-056](adr/056-LOCAL-TEST-PROVIDER-TRAINING-EXCEPTION.md) | DEC-025/052의 합성·본인 음성 시험 조건만 부분 대체 |
 | <a id="dec-057"></a>`DEC-057` | 이메일 링크와 Google OAuth/OIDC 로그인 병행 | Accepted | [ADR-057](adr/057-GOOGLE-LOGIN-ALONGSIDE-EMAIL.md) | DEC-020의 이메일 단독 로그인과 DEC-020/046의 재로그인 방법을 확대(2026-10-28 후속). 앱 이메일 인증·세션 관리 유지 |
 
@@ -234,7 +233,7 @@
 
 ### DEC-055 · Gemini Live 우선 E2E와 음성 포트·어댑터
 
-2026-10-27 · Accepted — 사용자가 Gemini Live로 앱 E2E를 먼저 연결한 뒤 모델을 비교하고, 한 앱 안의 음성 포트·공급자 어댑터로 구현하며 필요 시 음성 구현을 별도 서버로 옮기는 방향에 “그래 그렇게 진행하자”라고 동의했다. 초기 연결 준비와 운영 복잡성을 줄이며 분리형 전환 시 STT·LLM·TTS 연결/중단 처리는 추가 구현한다. DEC-053/054의 비교 선행 순서와 TASKS의 D-03 완료 후 B-09 착수 조건을 이 로컬 통합에 한해 대체하며 최종 모델 선택·공개 배포·MSA 채택을 뜻하지 않는다.
+결정일·동의 근거·이유와 적용 범위는 [ADR-055](adr/055-GEMINI-LIVE-FIRST-E2E-AND-VOICE-PORT.md)에 이관했다. 기존 앵커는 유지한다.
 
 ## 기록·변경 규칙
 

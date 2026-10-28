@@ -1,6 +1,6 @@
 # 학습 저장·복원 설계
 
-갱신일: 2026-10-28. `/learn`의 가짜 AI·합성 대화 저장 구현과 남은 계약을 관리한다. 실제 음성 전사문은 아직 이 흐름에 연결하지 않았다. 사용자 동작·보관 기한은 [PRD 6·8절](../PRD.md#6-대화-상태와-예외), 구조는 [DESIGN](../DESIGN.md), 데이터 모델은 [DATABASE](DATABASE.md)를 따른다.
+갱신일: 2026-10-28. `/learn`의 가짜 AI·합성 대화 저장 구현과 남은 계약을 관리한다. 실제 음성 전사문은 아직 이 흐름에 연결하지 않았다. 사용자 동작·보관 기한은 [PRD 6·8절](../PRD.md#6-대화-상태와-예외)을 따르며 데이터 모델은 [DATABASE](DATABASE.md)와 연결한다.
 
 구현: [클라이언트 저장](../../app/src/app/learn/page.tsx), [학습 상태](../../app/src/learning/session.ts), [저장/노트 서비스](../../app/src/server/learning.ts), [원문 수명](../../app/src/server/db/transcripts-lifecycle.ts), [기한 작업](../../app/src/server/maintenance.ts).
 
