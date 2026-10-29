@@ -1,3 +1,4 @@
+import { buildVoiceNoteMarkdown } from "../src/voice/note";
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { eq, sql } from "drizzle-orm";
@@ -6,9 +7,10 @@ import { databases, closeDatabases } from "../src/server/db";
 import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "../src/server/db/records-schema";
 import { transcriptSessionStates, transcriptSaves } from "../src/server/db/transcripts-schema";
 import { deleteTranscriptSource } from "../src/server/db/transcripts-lifecycle";
-import { consumeLink, deleteAccount, digest, inspectLink, logout, requestLink, withIdentity, type Mail } from "../src/server/auth";
-import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
+import { consumeLink, deleteAccount, dbNow, digest, inspectLink, logout, requestLink, withIdentity, type Mail } from "../src/server/auth";
+import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
+import { priorLearningWindow } from "../src/voice/prior-learning";
 import { boundRecords } from "../src/learning/buffer";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -203,6 +205,82 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     await requestLink("b@example.test", "login", undefined, capture);
     await assert.rejects(consumeLink(secret(), raw), /LOGOUT_FIRST/);
     assert.equal((await withIdentity(raw, async (_tx, who) => who.emailAddress)), "a@example.test");
+  });
+  it("stores and resumes voice evidence, isolates its connection and finalizes a voice note", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    try {
+      const raw = await login(), other = await login("other@example.test");
+      const session = await startLearning(raw, "voice");
+      await getVoiceLearningContext(raw, session.learningSessionId, session.learningConnectionToken);
+      await assert.rejects(getVoiceLearningContext(other, session.learningSessionId, session.learningConnectionToken), /NOT_FOUND/);
+      await assert.rejects(getVoiceLearningContext(raw, session.learningSessionId, "wrong"), /CONNECTION_EXPIRED/);
+      const snapshot = { ...record("I go yesterday."), learningState: "retry", corrections: [{ correctionId: "c1", sourceTurnId: "user-1", deliveredTurnId: "assistant-1", replacement: "What happened next?", explanation: "Synthetic test correction", attempts: [] }] };
+      await saveLearning(raw, session.learningSessionId, session.learningConnectionToken, 1, snapshot);
+      await updateLearningHeartbeat(raw, session.learningSessionId, session.learningConnectionToken, true);
+      await assert.rejects(startLearning(raw, "conversation"), /LEARNING_MODE_CONFLICT/);
+      const resumed = await startLearning(raw, "voice");
+      assert.equal(resumed.conversationSnapshot.learningState, "retry");
+      assert.equal(resumed.conversationSnapshot.corrections.length, 1);
+      await assert.rejects(getVoiceLearningContext(raw, session.learningSessionId, session.learningConnectionToken), /CONNECTION_EXPIRED/);
+      await endLearning(raw, resumed.learningSessionId, resumed.learningConnectionToken);
+      await completeLearningNote(raw, resumed.learningSessionId);
+      const notes = (await listLearningRecords(raw)).notes;
+      assert.equal(notes.length, 1); assert.match(notes[0].noteMarkdown, /비공개 음성 통합 시험/);
+      assert.match(notes[0].noteMarkdown, /Synthetic test correction/);
+      assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
+      const next = await startLearning(raw, "voice");
+      assert.equal(next.conversationSnapshot.learningState, "conversation");
+      assert.equal(next.conversationSnapshot.turns.length, 0);
+      assert.deepEqual((await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext.reviewExpressions,
+        [{ expression: "What happened next?", observations: ["추천"] }]);
+      const otherSession = await startLearning(other, "voice");
+      assert.deepEqual((await getVoiceLearningContext(other, otherSession.learningSessionId, otherSession.learningConnectionToken)).priorLearningContext.reviewExpressions, []);
+      await databases().records.update(learningSessionNotes).set({ noteRetentionExpiresAt: new Date("2000-01-01T00:00:00Z") }).where(eq(learningSessionNotes.learningSessionId, resumed.learningSessionId));
+      assert.deepEqual((await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext.reviewExpressions, []);
+      const { now, userId } = await withIdentity(raw, async (tx, who) => ({ now: await dbNow(tx), userId: who.userId }));
+      const { fromDateKst, toDateKst } = priorLearningWindow(now);
+      const before = new Date(fromDateKst + "T00:00:00Z"); before.setUTCDate(before.getUTCDate() - 1);
+      const future = new Date(toDateKst + "T00:00:00Z"); future.setUTCDate(future.getUTCDate() + 1);
+      for (const [date, expression] of [[before.toISOString().slice(0, 10), "Outside window."], [fromDateKst, "At boundary."], [future.toISOString().slice(0, 10), "Future note."]]) {
+        const learningSessionId = randomUUID(), endedAt = new Date(date + "T00:00:00Z");
+        await databases().records.insert(learningSessions).values({ learningSessionId, userId, learningSessionStartedAt: endedAt, learningSessionEndedAt: endedAt,
+          learningSessionStatus: "ended", demoScenario: "voice", noteGenerationStatus: "ready" });
+        await databases().records.insert(learningSessionNotes).values({ learningSessionId, userId, learningEndDateKst: date,
+          noteMarkdown: notes[0].noteMarkdown.replaceAll("What happened next?", expression), noteRetentionExpiresAt: new Date(now.getTime() + 86400000) });
+      }
+      assert.deepEqual((await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext.reviewExpressions,
+        [{ expression: "At boundary.", observations: ["추천"] }]);
+      assert.equal((await listLearningRecords(raw)).notes.length, 3, "Context window must not hide or delete retained notes");
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+  it("reads retained difficulty outside the review window and keeps topic context isolated", async () => {
+    const raw = await login(), other = await login("other@example.test");
+    const next = await startLearning(raw, "voice"), otherNext = await startLearning(other, "voice");
+    const { now, userId } = await withIdentity(raw, async (tx, who) => ({ now: await dbNow(tx), userId: who.userId }));
+    const { fromDateKst, toDateKst } = priorLearningWindow(now);
+    const oldDate = new Date(fromDateKst + "T00:00:00Z"); oldDate.setUTCDate(oldDate.getUTCDate() - 1);
+    const seeded: string[] = [];
+    for (const [date, summary] of [[oldDate.toISOString().slice(0, 10), "Older difficulty"], [toDateKst, "Cafe topic"]]) {
+      const id = randomUUID(); seeded.push(id);
+      const snapshot = { learningState: "conversation" as const, corrections: [], turns: [
+        { turnId: "u1", requestId: "r1", role: "user" as const, text: "Synthetic answer." },
+      ] };
+      const noteMarkdown = buildVoiceNoteMarkdown(snapshot, date + "T00:00:00Z", [{ kind: summary === "Cafe topic" ? "topic" : "difficulty", summary,
+        evidence: [{ turnId: "u1", role: "user", text: "Synthetic answer." }] }])!;
+      await databases().records.insert(learningSessions).values({ learningSessionId: id, userId, learningSessionStartedAt: new Date(date), learningSessionEndedAt: new Date(date), learningSessionStatus: "ended", demoScenario: "voice", noteGenerationStatus: "ready" });
+      await databases().records.insert(learningSessionNotes).values({ learningSessionId: id, userId, learningEndDateKst: date, noteMarkdown, noteRetentionExpiresAt: new Date(now.getTime() + 86400000) });
+    }
+    const context = (await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext;
+    assert.equal(context.topics?.[0].summary, "Cafe topic");
+    assert.equal(context.difficulty?.[0].summary, "Older difficulty");
+    assert.deepEqual((await getVoiceLearningContext(other, otherNext.learningSessionId, otherNext.learningConnectionToken)).priorLearningContext, { reviewExpressions: [] });
+    await databases().records.update(learningSessionNotes).set({ noteRetentionExpiresAt: new Date(0) }).where(eq(learningSessionNotes.learningSessionId, seeded[0]));
+    assert.equal((await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext.difficulty, undefined);
   });
   it("enforces one connection, isolated ownership and idempotent/save-sequence-conflict saves", async () => {
     const raw = await login(), b = await login("b@example.test");

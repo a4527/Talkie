@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "voice:smoke": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/smoke-voice.ts",
+    "voice:smoke:learning": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/smoke-voice-learning.ts",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",

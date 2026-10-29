@@ -4,13 +4,17 @@ import { createGeminiLiveSetup, VOICE_TEST_SECONDS } from "../voice/gemini-live-
 
 // Local, single-process test guard only. This is not an operational quota or cost system.
 const issuedUntil = new Map<string, number>();
-export async function issueVoiceToken(userId: string, request: typeof fetch = fetch) {
+export function requireVoiceTestConfiguration() {
   getLocalConfig(); // Reject non-loopback deployments using the existing local configuration boundary.
   if (process.env.TALKIE_VOICE_TEST !== "gemini-free" || process.env.GEMINI_FREE_TIER_CONFIRMED !== "true") {
     throw new AppError("VOICE_TEST_DISABLED", 403);
   }
   const key = process.env.GOOGLE_API_KEY?.trim();
   if (!key) throw new AppError("VOICE_KEY_REQUIRED", 503);
+  return key;
+}
+export async function issueVoiceToken(userId: string, request: typeof fetch = fetch, learning = false) {
+  const key = requireVoiceTestConfiguration();
   const now = Date.now();
   for (const [id, until] of issuedUntil) if (until <= now) issuedUntil.delete(id);
   if (issuedUntil.has(userId)) throw new AppError("VOICE_TEST_WAIT", 429);
@@ -20,7 +24,7 @@ export async function issueVoiceToken(userId: string, request: typeof fetch = fe
       method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({ uses: 1, expireTime: new Date(now + (VOICE_TEST_SECONDS + 60) * 1000).toISOString(),
         newSessionExpireTime: new Date(now + 60_000).toISOString(),
-        bidiGenerateContentSetup: createGeminiLiveSetup() }),
+        bidiGenerateContentSetup: createGeminiLiveSetup(learning) }),
       signal: AbortSignal.timeout(10_000), cache: "no-store",
     });
     if (!res.ok) throw new AppError("VOICE_TOKEN_UNAVAILABLE", 503);

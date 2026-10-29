@@ -1,6 +1,9 @@
 import "server-only";
+import { priorLearningWindow, selectPriorLearningContext } from "../voice/prior-learning";
+import { requireVoiceTestConfiguration } from "./voice-token";
+import { buildVoiceNoteMarkdown } from "../voice/note";
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
@@ -80,11 +83,13 @@ async function readConfirmed(row: LearningRow): Promise<ConversationSnapshot> {
   return { turns: [...turns.values()], corrections: [...corrections.values()], learningState, hasConversationGaps };
 }
 export async function startLearning(loginSessionToken: string | undefined, demoScenario: string) {
+  if (demoScenario === "voice") requireVoiceTestConfiguration();
   return withIdentity(loginSessionToken, async (tx, who) => {
     const now = await dbNow(tx);
     const [previous] = await tx.select().from(learningSessions).where(and(eq(learningSessions.userId, who.userId), inArray(learningSessions.learningSessionStatus, ["active", "interrupted"]))).for("update");
     if (previous?.learningConnectionExpiresAt && previous.learningConnectionExpiresAt > now && previous.learningSessionStatus === "active") throw new AppError("ALREADY_CONNECTED", 409);
     if (previous) {
+      if ((previous.demoScenario === "voice") !== (demoScenario === "voice")) throw new AppError("LEARNING_MODE_CONFLICT", 409);
       const learningSessionInterruptedAt = previous.learningSessionInterruptedAt ?? previous.learningConnectionExpiresAt ?? now;
       if (now.getTime() >= learningSessionInterruptedAt.getTime() + DAY) throw new AppError("SESSION_CLOSING", 409);
       const conversationSnapshot = await readConfirmed(previous);
@@ -92,7 +97,7 @@ export async function startLearning(loginSessionToken: string | undefined, demoS
       await tx.update(learningSessions).set({ learningSessionStatus: "active", learningSessionInterruptedAt: null, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000) }).where(eq(learningSessions.learningSessionId, previous.learningSessionId));
       return { learningSessionId: previous.learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: previous.confirmedSaveSequenceNumber, demoScenario: previous.demoScenario, conversationSnapshot };
     }
-    if (!["correction", "conversation"].includes(demoScenario)) throw new AppError("INVALID_SCENARIO");
+    if (!["correction", "conversation", "voice"].includes(demoScenario)) throw new AppError("INVALID_SCENARIO");
     const learningSessionId = randomUUID(), learningConnectionToken = token();
     const emptyConversationSnapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation", hasConversationGaps: false };
     await tx.insert(learningSessions).values({ learningSessionId, userId: who.userId, learningSessionStartedAt: now, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000), demoScenario });
@@ -182,7 +187,7 @@ export async function finalizeLearningNote(tx: RecordsTransaction, row: Learning
     return;
   }
   const conversationSnapshot = await readConfirmed(row);
-  const noteMarkdown = buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
+  const noteMarkdown = row.demoScenario === "voice" ? buildVoiceNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt.toISOString()) : buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
   if (noteMarkdown) await tx.insert(learningSessionNotes).values({ learningSessionId: row.learningSessionId, userId: row.userId, learningEndDateKst: formatKstDate(row.learningSessionEndedAt.toISOString()), noteMarkdown,
     noteRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + 30 * DAY) }).onConflictDoNothing();
   await tx.update(learningSessions).set({ noteGenerationStatus: noteMarkdown ? "ready" : "empty", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
@@ -205,5 +210,28 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
       .from(learningSessions).where(eq(learningSessions.userId, who.userId));
     const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`));
     return { emailAddress: who.emailAddress, sessions, notes: saved.map(n => ({ learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
+  });
+}
+
+export async function getVoiceLearningContext(loginSessionToken: string | undefined, learningSessionId: string, learningConnectionToken: string) {
+  return withIdentity(loginSessionToken, async (tx, who) => {
+    const row = await requireOwnedLearningSession(tx, who, learningSessionId), now = await dbNow(tx);
+    requireLearningConnection(row, learningConnectionToken, now);
+    if (row.demoScenario !== "voice") throw new AppError("LEARNING_MODE_CONFLICT", 409);
+    const window = priorLearningWindow(now);
+    const notes = await tx.select({ learningEndDateKst: learningSessionNotes.learningEndDateKst, noteMarkdown: learningSessionNotes.noteMarkdown })
+      .from(learningSessionNotes).innerJoin(learningSessions, eq(learningSessionNotes.learningSessionId, learningSessions.learningSessionId))
+      .where(and(eq(learningSessionNotes.userId, who.userId), eq(learningSessions.userId, who.userId),
+        eq(learningSessions.demoScenario, "voice"), eq(learningSessions.learningSessionStatus, "ended"), eq(learningSessions.noteGenerationStatus, "ready"),
+        gte(learningSessionNotes.learningEndDateKst, window.fromDateKst), lte(learningSessionNotes.learningEndDateKst, window.toDateKst),
+        sql`${learningSessionNotes.learningSessionId} <> ${learningSessionId}`, sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`));
+    // Difficulty uses the latest retained valid observation independently of the review window.
+    const difficultyNotes = await tx.select({ learningEndDateKst: learningSessionNotes.learningEndDateKst, noteMarkdown: learningSessionNotes.noteMarkdown })
+      .from(learningSessionNotes).innerJoin(learningSessions, eq(learningSessionNotes.learningSessionId, learningSessions.learningSessionId))
+      .where(and(eq(learningSessionNotes.userId, who.userId), eq(learningSessions.userId, who.userId),
+        eq(learningSessions.demoScenario, "voice"), eq(learningSessions.learningSessionStatus, "ended"), eq(learningSessions.noteGenerationStatus, "ready"),
+        lte(learningSessionNotes.learningEndDateKst, window.toDateKst),
+        sql`${learningSessionNotes.learningSessionId} <> ${learningSessionId}`, sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`));
+    return { userId: who.userId, priorLearningContext: selectPriorLearningContext(notes, difficultyNotes) };
   });
 }

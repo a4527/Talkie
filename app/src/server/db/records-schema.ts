@@ -41,7 +41,7 @@ export const learningSessions = pgTable("learning_sessions", {
   check("learning_session_status", sql`${t.learningSessionStatus} in ('active', 'interrupted', 'ended')`),
   check("confirmed_save_sequence_nonnegative", sql`${t.confirmedSaveSequenceNumber} >= 0`),
   check("note_generation_status", sql`${t.noteGenerationStatus} in ('idle', 'waiting_save', 'pending', 'ready', 'empty', 'expired')`),
-  check("learning_demo_scenario", sql`${t.demoScenario} in ('correction', 'conversation')`),
+  check("learning_demo_scenario", sql`${t.demoScenario} in ('correction', 'conversation', 'voice')`),
 ]);
 export const learningSessionNotes = pgTable("learning_session_notes", {
   learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),

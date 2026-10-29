@@ -7,5 +7,6 @@ export const apiErrorMessages: Record<string, string> = {
   REPLACED_LINK: "새 요청으로 이전 링크가 무효화됐습니다.", LOGOUT_FIRST: "다른 계정으로 로그인돼 있습니다. 먼저 로그아웃해 주세요.",
   ORIGINAL_BROWSER_REQUIRED: "탈퇴 요청을 시작한 브라우저에서 확인해 주세요.", CONFIRM_DELETE_FIRST: "탈퇴 전에 이메일 본인 확인이 필요합니다.",
   ALREADY_CONNECTED: "다른 탭이나 기기에서 대화가 진행 중입니다. 기존 연결이 중단된 뒤 이어갈 수 있습니다.",
+  LEARNING_MODE_CONFLICT: "다른 방식의 학습이 중단돼 있습니다. 기존 학습 화면에서 이어서 하거나 종료해 주세요.",
   SESSION_CLOSING: "이전 대화를 정리하고 있습니다. 잠시 후 다시 시작해 주세요.",
 };

@@ -8,17 +8,17 @@
 | --- | --- | --- | --- | --- |
 | `DEC-001` | 제품 형태는 반응형 웹서비스 | Accepted | [ADR-001](adr/001-RESPONSIVE-WEB.md) | — |
 | `DEC-002` | 학습 이력은 사용자별 별도 저장소가 기준 | Accepted | [ADR-002](adr/002-PER-USER-LEARNING-RECORDS.md) | — |
-| `DEC-003` | 대화 흐름의 핵심 규칙 | Partially Superseded | [ADR-003](adr/003-CONVERSATION-RULES.md) | 명시 종료만 허용한 부분은 DEC-024의 외부 환경 중단 후 자동 종료 예외로 대체 |
+| `DEC-003` | 대화 흐름의 핵심 규칙 | Partially Superseded | [ADR-003](adr/003-CONVERSATION-RULES.md) | 명시 종료만 허용한 부분은 DEC-024/059의 중단 후·시간 한도 자동 종료 예외로 대체 |
 | `DEC-008` | 서비스 부담의 실시간 음성 AI와 제한된 학습 맥락 | Partially Superseded | [ADR-008](adr/008-REALTIME-AI-AND-CONTEXT.md) | 학습 상태 책임 부분은 DEC-010으로 대체, 나머지는 유지 |
 | `DEC-010` | AI의 학습 진행 판단과 앱의 상태 기록·복원 | Accepted | [ADR-010](adr/010-AI-LED-LEARNING-APP-RECORDS.md) | DEC-008의 학습 상태 책임 부분 대체 |
-| `DEC-012` | 전체 대화 임시 보관과 요약·학습 항목·원문 근거 보관 | Accepted | [ADR-012](adr/012-TEMPORARY-TRANSCRIPTS-AND-LEARNING-EVIDENCE.md) | DEC-002·DEC-010의 기록 범위 구체화, 종료 후 AI 일괄 선별·임시 원문 최대 24시간/성공 즉시 삭제 후속 합의 포함 |
+| `DEC-012` | 전체 대화 임시 보관과 요약·학습 항목·원문 근거 보관 | Accepted | [ADR-012](adr/012-TEMPORARY-TRANSCRIPTS-AND-LEARNING-EVIDENCE.md) | DEC-002·DEC-010의 기록 범위 구체화, 종료 후 AI 일괄 선별·임시 원문 최대 24시간/성공 즉시 삭제 후속 합의 포함. 노트 단일 저장 구성은 ADR의 2026-10-29 재확인 참조 |
 | `DEC-014` | 공개 가입과 제한된 무료 체험 | Accepted | [ADR-014](adr/014-PUBLIC-SIGNUP-LIMITED-TRIAL.md) | DEC-008의 무료 체험 방향 구체화 |
 | `DEC-015` | 첫 로컬 구현의 Next.js와 TypeScript | Accepted | [ADR-015](adr/015-NEXTJS-TYPESCRIPT-LOCAL-PROTOTYPE.md) | DEC-006·DEC-007의 개발 접근 구체화 |
 | `DEC-017` | 무료 체험 1개월·유료 기간 제한 없는 학습 기록 보관 | Accepted | [ADR-017](adr/017-PLAN-BASED-LEARNING-RECORD-RETENTION.md) | DEC-012·DEC-014의 지속 학습 기록 보관 기간 구체화, 학습 종료 후 30일·유료 전환 후속 합의 포함 |
 | `DEC-018` | 구독 만료 후 기존 유료 학습 기록 유지·조회·다운로드 | Accepted | [ADR-018](adr/018-LEARNING-RECORDS-AFTER-SUBSCRIPTION-EXPIRY.md) | DEC-017의 미정 구독 종료 후 처리 구체화 |
 | `DEC-020` | 이메일 링크 로그인·마지막 이용 후 30일 유지·로그인 링크 10분 | Partially Superseded | [ADR-020](adr/020-EMAIL-LINK-LOGIN-AND-SESSION-RETENTION.md) | DEC-014의 로그인 방식·DEC-019의 탈퇴 본인 확인 구체화, 링크 일회성 후속 합의 포함. 이메일 단독 로그인 범위는 DEC-057로 확대 |
 | `DEC-021` | 탈퇴 즉시 차단·24시간 이내 일괄 삭제·백업 7일 이내 삭제 | Accepted | [ADR-021](adr/021-SCHEDULED-ACCOUNT-DELETION-AND-BACKUP-DEADLINES.md) | DEC-019·DEC-020의 탈퇴 처리·백업 기한 구체화 |
-| `DEC-024` | 외부 환경 중단 후 24시간 자동 종료·노트 생성 | Accepted | [ADR-024](adr/024-AUTO-CLOSE-INTERRUPTED-SESSION-AFTER-ONE-DAY.md) | DEC-003의 절대적 명시 종료 규칙에 예외 추가, DEC-010의 종료 실행 범위 구체화 |
+| `DEC-024` | 외부 환경 중단 후 24시간 자동 종료·노트 생성 | Partially Superseded | [ADR-024](adr/024-AUTO-CLOSE-INTERRUPTED-SESSION-AFTER-ONE-DAY.md) | DEC-003의 절대적 명시 종료 규칙에 예외 추가. 정상 연결 중 지속 범위는 DEC-059가 부분 대체 |
 | `DEC-025` | 앱의 휘발성 음성 처리·공급자 모델 학습 금지·최대 30일 보관 | Partially Superseded | [ADR-025](adr/025-EPHEMERAL-AUDIO-AND-PROVIDER-RETENTION.md) | DEC-008·DEC-016의 음성 처리·공급자 조건 구체화. 실험 한정 유예는 DEC-052/056 |
 | `DEC-026` | 앱 직접 관리 이메일 링크·세션 인증 | Accepted | [ADR-026](adr/026-APP-MANAGED-EMAIL-LINK-AUTHENTICATION.md) | DEC-020의 인증 구현 책임 구체화 |
 | `DEC-028` | 지속 작업 목록과 정시 실행 | Accepted | [ADR-028](adr/028-DURABLE-SCHEDULED-WORK-LIST.md) | DEC-012/021/024의 작업 실행 방식 구체화 |
@@ -101,7 +101,7 @@
 
 ### DEC-023 · 미경험 상황 우선·질문 반복 회피
 
-2026-10-21 · Accepted — 접근 가능한 이력에서 미경험 상황을 우선하고 후보 부족 시 오래된 상황을 다른 질문으로 활용한다. 질문의 불필요한 반복을 피하되 어려운 표현의 의도적 복습은 허용하며 세부 선택 규칙은 PRD 4.1·5·7·9.2절을 따른다(DEC-008 구체화).
+2026-10-21 · Accepted (2026-10-29 조회 범위 후속 변경) — 미경험 상황 우선·질문 반복 회피와 의도적 복습 허용을 유지한다. 사용자가 누적 이력 조회 부담을 줄이기 위해 주제·복습 표현을 최근 6개월 범위에서 선택하는 초기 기준에 동의했다. 기존 전체 이력 확인 범위를 대체하며 현행 계약은 [PRD 7절](PRD.md#7-주제와-표현-정책)·[9.2절](PRD.md#92-ai-제공맥락이용량-정책)을 따른다. 기간 밖의 미해결 표현을 놓칠 수 있는 절충은 후속 테스트에서 재검토하며 보관·삭제 정책은 유지한다(DEC-008 구체화).
 
 <a id="dec-027"></a>
 
@@ -234,6 +234,18 @@
 ### DEC-055 · Gemini Live 우선 E2E와 음성 포트·어댑터
 
 결정일·동의 근거·이유와 적용 범위는 [ADR-055](adr/055-GEMINI-LIVE-FIRST-E2E-AND-VOICE-PORT.md)에 이관했다. 기존 앵커는 유지한다.
+
+<a id="dec-058"></a>
+
+### DEC-058 · 별도 종료 선별 요청과 제한적 재시도
+
+2026-10-29 · Accepted — 사용자가 노트 선별을 실시간 연결과 분리된 종료 요청으로 처리하고, 오류별 제한적 재시도·검증된 부분 결과 완성·시험용 근거 노트로 자동 대체하지 않는 방향에 동의했다. 연결 단절 후에도 저장 확정 기록으로 처리하고 조기 원문 삭제를 피하기 위한 선택이며, 후속으로 사용자가 짧은 회화를 목표로 평균 10분 산정 가정·구간별 중간 요약 없는 종료 일괄 선별을 선택했다. 모델/호출 수치·평가/검증은 남는다. 세션 시간 상한은 DEC-059로 확정했다. 구현 계약은 [학습 노트 설계](design/LEARNING-NOTE.md#생성검증저장-순서)를 따른다.
+
+<a id="dec-059"></a>
+
+### DEC-059 · 짧은 회화 중심과 한 대화 시간 상한
+
+2026-10-29 · Accepted — [ADR-059](adr/059-SHORT-CONVERSATIONS-AND-SESSION-LIMIT.md). 짧게 자주 연습하는 제품 방향과 시간 상한을 채택하며 DEC-003/024의 정상 연결 중 지속 범위를 부분 대체한다.
 
 ## 기록·변경 규칙
 

@@ -1,6 +1,6 @@
 # 로컬 API 계약
 
-갱신일: 2026-10-28. 현재 로컬 합성 이메일·가짜 AI 저장 API와 비공개 음성 시험 API의 구현 설명이다. Google OAuth/OIDC 로그인 API와 운영 음성 API는 미구현이다. 로그인 조건은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다.
+갱신일: 2026-10-29. 현재 로컬 합성 이메일·가짜 AI 저장 API와 비공개 음성 시험 API의 구현 설명이다. Google OAuth/OIDC 로그인 API와 운영 음성 API는 미구현이다. 로그인 조건은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다.
 
 ## 공통 요청·응답
 
@@ -39,17 +39,19 @@
 
 | action | 요청 필드 (action 외) | 정상 응답 |
 | --- | --- | --- |
-| `start` | `scenario` (`correction` 또는 `conversation`) | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot}`. 진행 대화가 있으면 재개 조건 확인 |
+| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot}`. 진행 대화가 있으면 재개 조건 확인 |
 | `save` | `learningSessionId`, `learningConnectionToken`, `saveSequenceNumber`, `conversationSnapshot` | `{confirmedSaveSequenceNumber}` |
 | `end` | `learningSessionId`, `learningConnectionToken` | `{learningSessionEndedAt}` |
 | `heartbeat`, `pause` | `learningSessionId`, `learningConnectionToken` | `{ok: true}` |
-| `note` | `learningSessionId` | `{ok: true}`. 본인 세션의 가짜 노트 정리이며 연결 토큰은 요구하지 않음 |
+| `note` | `learningSessionId` | `{ok: true}`. 본인 세션 방식에 맞는 시험용 근거 노트 정리이며 연결 토큰은 요구하지 않음 |
+
+음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다.
 
 `ConversationSnapshot`의 구조는 런타임 타입, 저장 JSON의 구형 키·해시 호환성은 [DB 저장 형식](DATABASE.md#저장-json과-이관-호환성), 저장·재시도·종료 순서는 [학습 저장 설계](LEARNING-PERSISTENCE.md)를 따른다.
 
 ## 비공개 음성 토큰 API
 
-`POST /api/voice/token`은 `{testOnly: true}`와 로그인 쿠키를 받아 `{voiceConnectionToken, testDurationSeconds}`를 반환한다. 현재 시험 시간은 180초다. 로그인·동일 출처·무료 시험 설정과 발급 간격을 확인한 뒤 서버가 공급자에 단기 연결 토큰을 요청한다. 브라우저에는 장기 API 키를 전달하지 않는다.
+`POST /api/voice/token`은 `{testOnly: true}`와 로그인 쿠키를 받아 `{voiceConnectionToken, testDurationSeconds}`를 반환한다. 현재 시험 시간은 180초다. 로그인·동일 출처·무료 시험 설정과 발급 간격을 확인한 뒤 서버가 공급자에 단기 연결 토큰을 요청한다. 브라우저에는 장기 API 키를 전달하지 않는다. 저장 학습 응답에는 `priorLearningContext`도 포함하며 선택된 복습 표현과 관찰을 담고, 유효한 상단 항목이 있으면 주제·난이도도 포함한다. 실제 연습일이 미확인이면 날짜를 생략하며 노트 등장일로 대신하지 않는다. 선택 규칙·상한과 현재 대화와의 구분은 [음성 설계](VOICE.md#튜터-프롬프트와-컨텍스트-경계)를 따른다. 메모리 전용 시험에는 이 필드를 반환하지 않는다. 저장 학습은 `learningSessionId`·`learningConnectionToken`도 보내며 본인 음성 학습의 유효 연결을 확인한 뒤 구조화 학습 도구가 포함된 설정으로 토큰을 발급한다. 기존 메모리 전용 시험은 이 필드 없이 유지한다.
 
 구현: [voice/token 라우트](../../app/src/app/api/voice/token/route.ts), [토큰 발급](../../app/src/server/voice-token.ts). 무료 여부의 수동 확인·직접 연결 제한은 [음성 설계](VOICE.md)를 따른다. Google 소셜 로그인과 Gemini 공급자 연결 토큰은 별개다.
 

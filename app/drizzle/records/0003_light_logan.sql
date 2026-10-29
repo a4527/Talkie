@@ -1,0 +1,2 @@
+ALTER TABLE "learning_sessions" DROP CONSTRAINT "learning_demo_scenario";--> statement-breakpoint
+ALTER TABLE "learning_sessions" ADD CONSTRAINT "learning_demo_scenario" CHECK ("learning_sessions"."demo_scenario" in ('correction', 'conversation', 'voice'));
