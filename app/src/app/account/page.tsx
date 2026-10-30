@@ -27,7 +27,7 @@ export default function Account() {
           <button className="secondary" disabled={busy} onClick={() => void act("delete")}>회원 탈퇴 확정</button></details>
       </> : <form onSubmit={e => { e.preventDefault(); void act("request", "login"); }}>
         <label htmlFor="email">이메일 주소</label><input id="email" type="email" required maxLength={254} placeholder="learner@example.test" value={email} onChange={e => setEmail(e.target.value)} />
-        <button className="primary" disabled={busy}>로그인 메일 요청</button><p className="hint">로컬 시험에서는 .test 주소의 메일을 <a href="http://127.0.0.1:8025" rel="noreferrer" target="_blank">테스트 메일함</a>에서 확인합니다.</p>
+        <button className="primary" disabled={busy}>로그인 메일 요청</button><p className="hint">로컬 시험에서는 .test 주소의 메일을 <a href={process.env.NEXT_PUBLIC_MAILPIT_ORIGIN ?? "http://127.0.0.1:8025"} rel="noreferrer" target="_blank">테스트 메일함</a>에서 확인합니다.</p>
       </form>}
       <p role="status">{statusMessage}</p>
     </section></main>;

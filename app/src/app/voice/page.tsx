@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { requestVoiceConnectionToken } from "../../client/voice";
 import { requestLearningAction, VoiceLearningStore, type StoredVoiceSession } from "../../client/learning";
 import { apiErrorMessages } from "../../client/api-error-messages";
-import { GeminiLiveAdapter } from "../../voice/adapters/gemini-live";
+import { createBrowserCascadeProviders } from "../../voice/cascade/browser-providers";
+import { createVoicePort } from "../../voice/create-port";
+import { VoicePlayback } from "../../voice/playback";
 import { BrowserAudio } from "../../voice/browser-audio";
 import type { VoicePort } from "../../voice/port";
 import { VoiceLearningRecords } from "../../voice/learning";
@@ -14,13 +16,14 @@ const voiceErrorMessages: Record<string, string> = {
   ...apiErrorMessages,
   LOGIN_REQUIRED: "먼저 내 계정에서 로컬 테스트 계정으로 로그인해 주세요.",
   VOICE_TEST_DISABLED: "서버의 무료 음성 시험 설정을 확인해 주세요.",
-  VOICE_KEY_REQUIRED: "서버에 Google API 키가 필요합니다.",
+  VOICE_KEY_REQUIRED: "서버에 선택한 음성 경로의 API 키가 필요합니다.",
   VOICE_TEST_WAIT: "앱의 시험용 재연결 제한입니다. 이전 시작 시도에서 4분 뒤 다시 시작할 수 있습니다.",
 };
 type Persistence = { store: VoiceLearningStore; records: VoiceLearningRecords; action?: "pause" | "end"; busy: boolean; timer?: ReturnType<typeof setInterval> };
-type VoiceRuntime = { port: VoicePort; audio: BrowserAudio; abort: AbortController; persistence?: Persistence; timer?: ReturnType<typeof setTimeout> };
+type VoiceRuntime = { port: VoicePort; audio: BrowserAudio; abort: AbortController; persistence?: Persistence; playback?: VoicePlayback; timer?: ReturnType<typeof setTimeout> };
 export default function VoiceTest() {
   const [accepted, setAccepted] = useState(false);
+  const [provider, setProvider] = useState<"gemini-live" | "cascade">("gemini-live");
   const [active, setActive] = useState(false);
   const [saving, setSaving] = useState(false);
   const [stored, setStored] = useState(false);
@@ -62,7 +65,7 @@ export default function VoiceTest() {
     const current = runtime.current;
     runtime.current = undefined;
     if (!current) return;
-    clearTimeout(current.timer); current.abort.abort(); current.port.close(); current.audio.close();
+    clearTimeout(current.timer); current.abort.abort(); current.playback?.close(); current.port.close(); current.audio.close();
     setActive(false);
     if (current.persistence && persistence.current === current.persistence) {
       current.persistence.action = action; setSaving(true);
@@ -104,32 +107,30 @@ export default function VoiceTest() {
         setRecords(value.records.getSnapshot().turns.map(t => ({ turnId: t.turnId, role: t.role, text: t.text, delivery: "played" })));
         value.timer = setInterval(() => void sync(value), 5000);
       }
-      const data = await requestVoiceConnectionToken(abort.signal, current.persistence?.store.session);
+      const data = provider === "cascade" ? await (async () => {
+        const response = await fetch("/api/voice/cascade", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
+          body: JSON.stringify({ action: "credential", testOnly: true, ...current.persistence?.store.session }) });
+        const result = await response.json(); if (!response.ok) throw new Error(result.error); return result;
+      })() : await requestVoiceConnectionToken(abort.signal, current.persistence?.store.session);
       if (runtime.current !== current) return;
-      const hasAudio = new Set<string>();
-      current.port = new GeminiLiveAdapter({ voiceConnectionToken: data.voiceConnectionToken, learning }, event => {
+      current.playback = new VoicePlayback(audio, turnId => {
+        if (runtime.current !== current) return;
+        current.port.acknowledgePlayback?.(turnId);
+        const event = { type: "played" as const, turnId };
+        setRecords(previous => updateVoiceTranscriptTurns(previous, event));
+        current.persistence?.records.apply(event);
+        if (current.persistence) setSnapshot(current.persistence.records.getSnapshot());
+      });
+      current.port = createVoicePort(provider === "cascade"
+        ? { provider: "cascade", providers: createBrowserCascadeProviders(data.temporarySttKey, data.cascadeRequestToken, current.persistence?.store.session), learning }
+        : { provider: "gemini-live", credential: { voiceConnectionToken: data.voiceConnectionToken, learning } }, event => {
         if (runtime.current !== current) return;
         current.persistence?.records.apply(event);
         if (current.persistence) setSnapshot(current.persistence.records.getSnapshot());
         if (event.type === "connected") setStatusMessage("대화 중 · 가상의 일상 이야기로 영어 한 문장을 말해 보세요. 최대 3분 후 연결을 중단합니다.");
         if (event.type === "transcript" || event.type === "interrupted") setRecords(previous => updateVoiceTranscriptTurns(previous, event));
-        if (event.type === "audio") {
-          hasAudio.add(event.turnId);
-          try { audio.play(event.pcm, event.sampleRateHz); } catch { stop(); setStatusMessage("재생이 지연되어 연결을 중단했습니다."); }
-        }
-        if (event.type === "interrupted") { audio.interrupt(); hasAudio.delete(event.turnId); }
-        if (event.type === "response-complete" && hasAudio.delete(event.turnId)) {
-          const turnId = event.turnId;
-          void audio.drained().then(played => {
-            if (played && runtime.current === current) {
-              const event = { type: "played" as const, turnId };
-              setRecords(previous => updateVoiceTranscriptTurns(previous, event));
-              current.persistence?.records.apply(event);
-              if (current.persistence) setSnapshot(current.persistence.records.getSnapshot());
-            }
-          });
-        }
-        if (event.type === "error") { setStatusMessage("음성 연결에 실패했습니다. 키·무료 한도·네트워크 상태를 확인해 주세요."); stop(); }
+        try { current.playback?.handle(event); } catch { stop(); setStatusMessage("재생이 지연되어 연결을 중단했습니다."); }
+        if (event.type === "error") { setStatusMessage(event.code === "billing" ? "Soniox 계정의 결제·크레딧 상태 때문에 전사를 시작하지 못했습니다." : "음성 연결에 실패했습니다. 키·무료 한도·네트워크 상태를 확인해 주세요."); stop(); }
         if (event.type === "closed") { setStatusMessage("음성 연결이 종료되었습니다."); stop(); }
       });
       current.timer = setTimeout(() => { stop(); setStatusMessage(learning ? "3분 연결을 중단했습니다. 저장된 학습은 이어서 할 수 있습니다." : "3분 시험을 마쳤습니다."); }, Math.min(Number(data.testDurationSeconds) || 180, 180) * 1000);
@@ -150,11 +151,14 @@ export default function VoiceTest() {
     <header className="site-header"><a className="brand" href="/">talkie.</a><a href="/account">내 계정</a></header>
     <section className="card account-card">
       <h1>음성 대화 시험</h1>
-      <p>개발자 본인만 사용하는 비공개 시험입니다. Google이 음성과 대화를 제품 개선·학습에 사용하거나 사람이 검토할 수 있습니다. 개인정보·민감정보·기밀정보는 말하지 마세요.</p>
+      <p>개발자 본인만 사용하는 비공개 시험입니다. 선택한 경로에 따라 Soniox와 Google이 음성·대화를 처리합니다. 공급자의 데이터 사용 조건을 확인해 주세요. 개인정보·민감정보·기밀정보는 말하지 마세요.</p>
       <p>음성 시험은 화면 메모리만 사용합니다. 저장 학습은 확인된 전사문·교정·재시도를 계정에 저장하고, 이어서 하기와 종료 후 근거 노트를 지원합니다. 원본 음성은 저장하지 않습니다.</p>
       <label><input type="checkbox" checked={accepted} disabled={active || saving} onChange={event => setAccepted(event.target.checked)} /> 본인 음성·가상 대화로 시험하며 공급자의 학습 사용 조건을 확인했습니다.</label>
       <p role="status">{statusMessage}</p>
       {saveMessage && <p role="status">{saveMessage}</p>}
+      <label>음성 경로 <select value={provider} disabled={active || saving} onChange={event => setProvider(event.target.value as "cascade" | "gemini-live")}>
+        <option value="gemini-live">Gemini Live</option><option value="cascade">분리형 음성</option>
+      </select></label>
       <div className="session-actions">
         <button className="primary" disabled={!accepted || active || saving} onClick={() => void start()}>음성 시험 시작</button>
         <button className="primary" disabled={!accepted || active || saving} onClick={() => void start(true)}>저장 학습 시작·이어서 하기</button>

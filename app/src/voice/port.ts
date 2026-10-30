@@ -12,11 +12,13 @@ export type VoiceEvent =
   | { type: "response-complete"; turnId: string; inputTurnId?: string }
   | { type: "interrupted"; turnId: string }
   | { type: "closed" }
-  | { type: "error"; code: "connection" | "protocol" | "timeout" };
+  | { type: "error"; code: "connection" | "protocol" | "timeout" | "billing" };
 
 export interface VoicePort {
   connect(context?: ConversationSnapshot, priorLearningContext?: PriorLearningContext): Promise<void>;
   sendAudio(pcm: Uint8Array, sampleRateHz: number): void;
+  /** Output-device acknowledgement, never a generation-complete signal. */
+  acknowledgePlayback?(turnId: string): void;
   close(): void;
 }
 export type VoiceListener = (event: VoiceEvent) => void;
