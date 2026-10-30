@@ -68,4 +68,4 @@
 | 429 | `WAIT_30_SECONDS`, `VOICE_TEST_WAIT` |
 | 503 | `SERVICE_UNAVAILABLE`, `VOICE_KEY_REQUIRED`, `VOICE_TOKEN_UNAVAILABLE` |
 
-이 표는 주요 사례이며 전체 오류 목록의 복사본이 아니다. 런타임 입력 검증·응답 변환은 연결한 코드를 기준으로 대조한다. 운영 음성 API·재연결·비용 초과 계약과 Google 계정 연결 정책은 미정이다. 생성 내용과 실제 재생 범위를 구분하고, 취소 뒤 늦은 응답이 확인 기록을 바꾸지 않는 제약은 [음성](VOICE.md)·[학습 저장](LEARNING-PERSISTENCE.md) 설계에 둔다.
+이 표는 주요 사례이며 전체 오류 목록의 복사본이 아니다. 런타임 입력 검증·응답 변환은 연결한 코드를 기준으로 대조한다. 운영 음성 API·재연결·연결 허용 시간 소진 계약과 Google 계정 연결 정책은 미정이다. 생성 내용과 실제 재생 범위를 구분하고, 취소 뒤 늦은 응답이 확인 기록을 바꾸지 않는 제약은 [음성](VOICE.md)·[학습 저장](LEARNING-PERSISTENCE.md) 설계에 둔다.

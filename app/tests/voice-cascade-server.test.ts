@@ -45,3 +45,31 @@ it("normalizes Gemini spokenText without inventing learning evidence", async () 
   const snapshot = { turns: [{ turnId: "u", requestId: "u", role: "user" as const, text: "Hello" }], corrections: [], learningState: "conversation" as const };
   expect(await cascadeText(snapshot, undefined, false, new AbortController().signal, request)).toEqual({ text: "Hello there.", learningResult: undefined });
 });
+
+it("observes server-side text and TTS usage without putting it in client payloads", async () => {
+  configured();
+  const snapshot = { turns: [{ turnId: "u", requestId: "u", role: "user" as const, text: "Hello" }], corrections: [], learningState: "conversation" as const };
+  const textUsage = vi.fn();
+  const textRequest = vi.fn(async () => ({ ok: true, json: async () => ({
+    candidates: [{ content: { parts: [{ text: JSON.stringify({ text: "Hello there." }) }] } }],
+    usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 2, totalTokenCount: 10 },
+  }) })) as unknown as typeof fetch;
+  expect(await cascadeText(snapshot, undefined, false, new AbortController().signal, textRequest, textUsage)).toEqual({ text: "Hello there.", learningResult: undefined });
+  expect(textUsage).toHaveBeenCalledWith(expect.objectContaining({ status: "reported", model: "gemini-3.5-flash-lite", totalTokenCount: 10 }));
+
+  const speechUsage = vi.fn();
+  const speechRequest = vi.fn(async () => ({ ok: true, json: async () => ({
+    candidates: [{ content: { parts: [{ inlineData: { data: Buffer.from([0, 0]).toString("base64") } }] } }],
+    usageMetadata: { promptTokensDetails: [{ modality: "TEXT", tokenCount: 2 }], candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 26 }] },
+  }) })) as unknown as typeof fetch;
+  expect(await cascadeSpeech("Hello", new AbortController().signal, speechRequest, speechUsage)).toEqual(Buffer.from([0, 0]));
+  expect(speechUsage).toHaveBeenCalledWith(expect.objectContaining({ status: "reported", model: "gemini-3.8-flash-lite-tts", candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 26 }] }));
+});
+
+it("marks an unsuccessful provider request as unconfirmed usage", async () => {
+  configured();
+  const usage = vi.fn();
+  const request = vi.fn(async () => ({ ok: false })) as unknown as typeof fetch;
+  await expect(cascadeSpeech("Hello", new AbortController().signal, request, usage)).rejects.toThrow();
+  expect(usage).toHaveBeenCalledWith({ provider: "google", model: "gemini-3.8-flash-lite-tts", source: "server_response", status: "unavailable" });
+});
