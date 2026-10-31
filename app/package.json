@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run tests/learning.test.ts tests/voice.test.ts tests/voice-cascade.test.ts tests/voice-playback.test.ts tests/soniox-events.test.ts tests/soniox-transport.test.ts tests/voice-cascade-route.test.ts tests/voice-cascade-server.test.ts tests/voice-usage.test.ts tests/voice-route.test.ts tests/naming-contracts.test.ts",
+    "test": "vitest run tests/learning.test.ts tests/voice.test.ts tests/voice-cascade.test.ts tests/voice-playback.test.ts tests/soniox-events.test.ts tests/soniox-transport.test.ts tests/voice-cascade-route.test.ts tests/voice-cascade-server.test.ts tests/voice-usage.test.ts tests/voice-route.test.ts tests/naming-contracts.test.ts tests/note-extraction.test.ts",
     "test:e2e": "playwright test --config tests/browser/playwright.config.ts",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; for (const path of ['.next', 'test-results', 'playwright-report', 'tsconfig.tsbuildinfo']) rmSync(path, { recursive: true, force: true });\"",
     "db:generate": "drizzle-kit generate --config drizzle.records.config.ts && drizzle-kit generate --config drizzle.transcripts.config.ts",
