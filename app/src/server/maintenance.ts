@@ -5,15 +5,16 @@ import { databases, type RecordsDatabase } from "./db";
 import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "./db/records-schema";
 import { transcriptSessionStates } from "./db/transcripts-schema";
 import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
-import { finalizeLearningNote } from "./learning";
+import { finalizeLearningNote, needsVoiceExtraction, extractVoiceNote, type NoteDeps } from "./learning";
 
-export async function maintenance() {
+export async function maintenance(deps: NoteDeps = {}) {
   const db = databases();
   let deletedAccountCount = 0, processedSessionCount = 0, failures = 0;
   // One user's changes serialize with authentication/save/end/delete. No provider calls under locks.
   const owners = await db.records.select({ id: users.userId }).from(users);
   for (const owner of owners) {
     try {
+      const voiceDue: string[] = [];
       await db.records.transaction(async tx => {
         const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
         if (!user) return;
@@ -42,8 +43,11 @@ export async function maintenance() {
           const [job] = await tx.select().from(scheduledJobs).where(and(eq(scheduledJobs.targetLearningSessionId, row.learningSessionId), eq(scheduledJobs.jobType, "note")));
           if (row.learningSessionEndedAt && (row.noteGenerationStatus !== "waiting_save" || (row.transcriptDeleteDeadlineAt && row.transcriptDeleteDeadlineAt <= now) ||
             (job && job.scheduledRunAt <= now && (!row.learningConnectionExpiresAt || row.learningConnectionExpiresAt <= now)))) {
-            await finalizeLearningNote(tx, row);
-            if (job) await tx.delete(scheduledJobs).where(eq(scheduledJobs.scheduledJobId, job.scheduledJobId));
+            if (needsVoiceExtraction(row, now)) voiceDue.push(row.learningSessionId); // model call runs after this transaction, without locks
+            else {
+              await finalizeLearningNote(tx, row);
+              if (job) await tx.delete(scheduledJobs).where(eq(scheduledJobs.scheduledJobId, job.scheduledJobId));
+            }
           }
           // A trimmed client window must not erase previously saved conversation history.
           processedSessionCount++;
@@ -51,6 +55,20 @@ export async function maintenance() {
         await tx.delete(learningSessionNotes).where(and(eq(learningSessionNotes.userId, user.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} <= ${now}`));
         // A successful note commits before its source is deleted, in the next pass below.
       });
+      for (const learningSessionId of voiceDue) {
+        const [due] = await db.records.select().from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId));
+        if (!due) continue;
+        const extraction = await extractVoiceNote(due, deps); // no lock, no transaction
+        await db.records.transaction(async tx => {
+          const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
+          const [row] = await tx.select().from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId)).for("update");
+          if (!user || !row) return;
+          await finalizeLearningNote(tx, row, extraction);
+          const [fresh] = await tx.select({ status: learningSessions.noteGenerationStatus }).from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId));
+          // A failed extraction keeps its job so the next pass retries before the deadline.
+          if (fresh && ["ready", "empty", "expired"].includes(fresh.status)) await tx.delete(scheduledJobs).where(and(eq(scheduledJobs.targetLearningSessionId, learningSessionId), eq(scheduledJobs.jobType, "note")));
+        });
+      }
       await db.records.transaction(async tx => {
         const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
         if (!user) return;

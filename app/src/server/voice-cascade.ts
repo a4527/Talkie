@@ -4,6 +4,7 @@ import { VOICE_TEST_SECONDS } from "../voice/gemini-live-setup";
 import { parseVoiceLearningResult } from "../voice/learning";
 import { selectVoiceContext } from "../voice/context";
 import { createTutorInstruction } from "../voice/tutor-prompt";
+import { NonRetryableExtractionError, type ExtractionGenerate } from "../voice/note-extraction";
 import type { ConversationSnapshot } from "../learning/types";
 import type { PriorLearningContext } from "../voice/prior-learning";
 import { observeGeminiUsage, type GeminiUsageObservation } from "./voice-usage";
@@ -59,7 +60,7 @@ async function googleCall(model: string, body: unknown, signal: AbortSignal, req
   catch (error) { await onUsage?.({ provider: "google", model, source: "server_response", status: "unavailable" }); throw error; }
   if (!response.ok) {
     await onUsage?.({ provider: "google", model, source: "server_response", status: "unavailable" });
-    throw new AppError("VOICE_PROVIDER_UNAVAILABLE", 503);
+    throw Object.assign(new AppError("VOICE_PROVIDER_UNAVAILABLE", 503), { upstreamStatus: response.status });
   }
   let result;
   try { result = await response.json(); }
@@ -92,4 +93,27 @@ export async function cascadeSpeech(text: string, signal: AbortSignal, request: 
   const pcm = Buffer.from(encoded, "base64");
   if (!pcm.length || pcm.length % 2 || pcm.length > 6_000_000) throw new AppError("VOICE_PROVIDER_UNAVAILABLE", 503);
   return pcm;
+}
+
+/** Text model for end-of-session note extraction (DEC-064: reuse the split-path Gemini text model). */
+export const NOTE_EXTRACTION_MODEL = "gemini-3.5-flash-lite";
+const retryableStatus = (status: unknown) => typeof status !== "number" || status === 408 || status === 429 || status >= 500;
+
+/** Adapter for extractNote. Auth/billing/other 4xx errors become non-retryable; network, 408, 429, 5xx stay retryable. */
+export function createGeminiExtractionGenerate(request: typeof fetch = fetch, onUsage?: (usage: GeminiUsageObservation) => void | Promise<void>): ExtractionGenerate {
+  return async ({ system, input, maxOutputTokens }, signal) => {
+    let result;
+    try {
+      result = await googleCall(NOTE_EXTRACTION_MODEL, { systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: input }] }],
+        generationConfig: { responseMimeType: "application/json", maxOutputTokens } }, signal, request, onUsage);
+    } catch (error) {
+      const status = (error as { upstreamStatus?: unknown }).upstreamStatus;
+      if (error instanceof AppError && !retryableStatus(status)) throw new NonRetryableExtractionError(error.code);
+      throw error;
+    }
+    const raw = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (typeof raw !== "string") throw new Error("EMPTY_MODEL_OUTPUT");
+    return raw;
+  };
 }

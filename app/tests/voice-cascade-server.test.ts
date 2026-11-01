@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-import { authorizeCascadeRequest, recordCascadeReply, cascadeSpeech, cascadeText, issueCascadeCredential } from "../src/server/voice-cascade";
+import { NonRetryableExtractionError } from "../src/voice/note-extraction";
+import { authorizeCascadeRequest, recordCascadeReply, cascadeSpeech, cascadeText, createGeminiExtractionGenerate, issueCascadeCredential } from "../src/server/voice-cascade";
 afterEach(() => { vi.unstubAllEnvs(); });
 function configured() { vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000"); vi.stubEnv("TALKIE_VOICE_CASCADE_TEST", "enabled"); vi.stubEnv("SONIOX_API_KEY", "synthetic-soniox"); vi.stubEnv("GOOGLE_API_KEY", "synthetic-google"); }
 it("issues a single-use bounded STT key and limits text/speech requests", async () => {
@@ -72,4 +73,17 @@ it("marks an unsuccessful provider request as unconfirmed usage", async () => {
   const request = vi.fn(async () => ({ ok: false })) as unknown as typeof fetch;
   await expect(cascadeSpeech("Hello", new AbortController().signal, request, usage)).rejects.toThrow();
   expect(usage).toHaveBeenCalledWith({ provider: "google", model: "gemini-3.8-flash-lite-tts", source: "server_response", status: "unavailable" });
+});
+
+it("note extraction adapter sends the system prompt and classifies upstream errors", async () => {
+  configured();
+  const ok = vi.fn(async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }) })) as unknown as typeof fetch;
+  expect(await createGeminiExtractionGenerate(ok)({ system: "SYS", input: "IN", maxOutputTokens: 77 }, new AbortController().signal)).toBe("{}");
+  const body = JSON.parse((ok as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+  expect(body.systemInstruction.parts[0].text).toBe("SYS");
+  expect(body.generationConfig.maxOutputTokens).toBe(77);
+  const fail = (status: number) => createGeminiExtractionGenerate(vi.fn(async () => ({ ok: false, status })) as unknown as typeof fetch)({ system: "s", input: "i", maxOutputTokens: 1 }, new AbortController().signal);
+  await expect(fail(401)).rejects.toBeInstanceOf(NonRetryableExtractionError);
+  await expect(fail(429)).rejects.not.toBeInstanceOf(NonRetryableExtractionError);
+  await expect(fail(503)).rejects.not.toBeInstanceOf(NonRetryableExtractionError);
 });

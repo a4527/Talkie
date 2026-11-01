@@ -2,6 +2,8 @@ import "server-only";
 import { priorLearningWindow, selectPriorLearningContext } from "../voice/prior-learning";
 import { requireVoiceTestConfiguration } from "./voice-token";
 import { buildVoiceNoteMarkdown } from "../voice/note";
+import { extractNote, NOTE_EXTRACTION_LIMITS, type ExtractionGenerate, type ExtractionRun } from "../voice/note-extraction";
+import { createGeminiExtractionGenerate } from "./voice-cascade";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { AppError } from "./config";
@@ -174,10 +176,30 @@ function buildDemoNoteMarkdown(conversationSnapshot: ConversationSnapshot, learn
   const escaped = (text: string) => text.slice(0, 160).replace(/[&<>\\`*_[\]{}()#!|]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] ?? "\\" + c)).replace(/\r?\n/g, "\n> ");
   return `# ${formatKstDate(learningSessionEndedAt.toISOString())} 영어 학습 노트\n\n가짜 AI 저장 시험 · 실제 언어 평가 결과가 아닙니다.\n\n${conversationSnapshot.hasConversationGaps ? "일부 대화 기록이 누락됐습니다.\n\n" : ""}## 대화 근거 일부\n\n` + userTurns.slice(-3).map(t => `> ${escaped(t.text)}\n\n근거: ${t.turnId}`).join("\n\n") + "\n";
 }
-export async function finalizeLearningNote(tx: RecordsTransaction, row: LearningRow) {
+export type NoteDeps = { generate?: ExtractionGenerate };
+const settled = (status: string) => ["ready", "empty", "expired"].includes(status);
+/** True when a voice note still needs the model. The model call must happen outside any database transaction. */
+export function needsVoiceExtraction(row: LearningRow, now: Date) {
+  return row.demoScenario === "voice" && !!row.learningSessionEndedAt && !!row.transcriptDeleteDeadlineAt && !settled(row.noteGenerationStatus) && row.transcriptDeleteDeadlineAt > now;
+}
+/** Reads confirmed text and calls the model. No lock or transaction may be held by the caller. A total failure returns null. */
+export async function extractVoiceNote(row: LearningRow, deps: NoteDeps = {}): Promise<ExtractionRun | null> {
+  try {
+    const snapshot = await readConfirmed(row);
+    if (!snapshot.turns.some(t => t.role === "user")) return { contextItems: [], detailItems: [], failedChunks: 0, totalChunks: 0, oversizedChunks: 0, omittedChunks: 0, droppedItems: 0, calls: 0 };
+    const run = await extractNote(snapshot, { generate: deps.generate ?? createGeminiExtractionGenerate(), signal: AbortSignal.timeout(NOTE_EXTRACTION_LIMITS.totalTimeoutMs + 5000) });
+    // No fallback note: with no usable chunk the session stays pending for a later retry before the deadline.
+    return run.totalChunks - run.failedChunks > 0 ? run : null;
+  } catch { return null; }
+}
+/**
+ * Writes the note. For a voice session the caller passes the extraction made outside the transaction;
+ * without it a voice note stays pending and nothing is stored.
+ */
+export async function finalizeLearningNote(tx: RecordsTransaction, row: LearningRow, extraction?: ExtractionRun | null) {
   if (!row.learningSessionEndedAt || !row.transcriptDeleteDeadlineAt) return;
   const now = await dbNow(tx);
-  if (["ready", "empty", "expired"].includes(row.noteGenerationStatus)) {
+  if (settled(row.noteGenerationStatus)) {
     await deleteTranscriptSource(row.learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
     return;
   }
@@ -186,21 +208,38 @@ export async function finalizeLearningNote(tx: RecordsTransaction, row: Learning
     await tx.update(learningSessions).set({ noteGenerationStatus: "expired", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
     return;
   }
+  if (row.demoScenario === "voice" && !extraction) return;
   const conversationSnapshot = await readConfirmed(row);
-  const noteMarkdown = row.demoScenario === "voice" ? buildVoiceNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt.toISOString()) : buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
-  if (noteMarkdown) await tx.insert(learningSessionNotes).values({ learningSessionId: row.learningSessionId, userId: row.userId, learningEndDateKst: formatKstDate(row.learningSessionEndedAt.toISOString()), noteMarkdown,
+  const endedAt = row.learningSessionEndedAt.toISOString();
+  const noteMarkdown = row.demoScenario === "voice"
+    ? buildVoiceNoteMarkdown(conversationSnapshot, endedAt, extraction!.contextItems, { details: extraction!.detailItems, incomplete: extraction!.failedChunks > 0 || extraction!.omittedChunks > 0 })
+    : buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
+  if (noteMarkdown) await tx.insert(learningSessionNotes).values({ learningSessionId: row.learningSessionId, userId: row.userId, learningEndDateKst: formatKstDate(endedAt), noteMarkdown,
     noteRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + 30 * DAY) }).onConflictDoNothing();
   await tx.update(learningSessions).set({ noteGenerationStatus: noteMarkdown ? "ready" : "empty", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
   // Commit durable note first. The worker deletes the source in a subsequent transaction.
 }
-export async function completeLearningNote(loginSessionToken: string | undefined, learningSessionId: string) {
-  await withIdentity(loginSessionToken, async (tx, who) => {
+export async function completeLearningNote(loginSessionToken: string | undefined, learningSessionId: string, deps: NoteDeps = {}) {
+  // 1) Short transaction: settle what needs no model, or capture the row for extraction.
+  const pending = await withIdentity(loginSessionToken, async (tx, who) => {
     const row = await requireOwnedLearningSession(tx, who, learningSessionId);
+    if (needsVoiceExtraction(row, await dbNow(tx))) return row;
     await finalizeLearningNote(tx, row);
+    return null;
   });
+  if (pending) {
+    // 2) Model call with no lock and no transaction held.
+    const extraction = await extractVoiceNote(pending, deps);
+    // 3) Short transaction: the row is locked again and its state re-read, so a concurrent finish or expiry wins.
+    await withIdentity(loginSessionToken, async (tx, who) => {
+      const row = await requireOwnedLearningSession(tx, who, learningSessionId);
+      await finalizeLearningNote(tx, row, extraction);
+    });
+    if (!extraction) throw new AppError("NOTE_PENDING", 503);
+  }
   await withIdentity(loginSessionToken, async (tx, who) => {
     const row = await requireOwnedLearningSession(tx, who, learningSessionId);
-    if (["ready", "empty", "expired"].includes(row.noteGenerationStatus)) await deleteTranscriptSource(learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
+    if (settled(row.noteGenerationStatus)) await deleteTranscriptSource(learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
   });
 }
 export async function listLearningRecords(loginSessionToken: string | undefined): Promise<LearningRecordsResponse> {

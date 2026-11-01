@@ -345,3 +345,14 @@ describe("versioned learning notes", () => {
     expect(selectPriorLearningContext([{ learningEndDateKst: "2026-10-01", noteMarkdown: legacy }]).reviewExpressions[0].expression).toBe("Legacy expression.");
   });
 });
+
+it("renders extraction details with their own anchors, marks adapted examples and flags incomplete notes", () => {
+  const snapshot = { turns: [{ turnId: "user-1", role: "user" as const, text: "I go yesterday." }, { turnId: "assistant-1", role: "assistant" as const, text: "You went yesterday." }], corrections: [], learningState: "conversation" as const, hasConversationGaps: false };
+  const evidence = [{ turnId: "user-1", role: "user" as const, text: "I go yesterday." }];
+  const note = buildVoiceNoteMarkdown(snapshot as never, "2026-10-29T15:01:00Z", [], { incomplete: true, details: [
+    { kind: "summary", text: "Past tense", evidence }, { kind: "example", text: "I went to school.", evidence, adapted: true }] })!;
+  expect(note).toContain('<a id="extra-1"></a>');
+  expect(note).toContain("복습용 응용(실제 발화 아님)");
+  expect(note).toContain("일부 학습 내용 또는 대화 기록이 누락됐습니다.");
+  expect(readNoteContext(note)).toEqual([]);
+});
