@@ -48,7 +48,7 @@ for (const testCase of EVAL_CASES) {
     if (result.totalChunks - result.failedChunks === 0) failedRuns++;
     for (const violation of checkRun(testCase, result)) violations.push({ caseId: testCase.id, run, violation });
     writeFileSync(`${outDir}/${testCase.id}-${run}.json`, JSON.stringify({ title: testCase.title, expected: testCase.note, result }, null, 2));
-    console.log(`${testCase.id} #${run}: calls=${result.calls} failedChunks=${result.failedChunks} dropped=${result.droppedItems}`);
+    console.log(`${testCase.id} #${run}: calls=${result.calls} failedChunks=${result.failedChunks} dropped=${result.droppedItems} reasons=${JSON.stringify(result.dropReasons ?? {})} repaired=${result.repairedEvidence ?? 0} stripped=${result.strippedObservations ?? 0}`);
   }
 }
 const report = [`# 종료 노트 선별 평가 ${outDir}`, "", `호출 간격 최소 ${gapMs}ms · 실행 ${runs} · 호출 ${calls} · 구간 실패 ${failedRuns} · 오류 종류 ${JSON.stringify(errorKinds)}`, ""];

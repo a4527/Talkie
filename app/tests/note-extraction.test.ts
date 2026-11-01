@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTE_EXTRACTION_LIMITS, NonRetryableExtractionError, buildExtractionInput, extractNote, mergeExtractions, parseExtraction, snapshotChars, splitSnapshotBySize, type ExtractionGenerate } from "../src/voice/note-extraction";
+import { locateQuote, NOTE_EXTRACTION_LIMITS, NonRetryableExtractionError, buildExtractionInput, extractNote, mergeExtractions, parseExtraction, snapshotChars, splitSnapshotBySize, type ExtractionGenerate } from "../src/voice/note-extraction";
 import type { ConversationSnapshot, Turn } from "../src/learning/types";
 
 const turn = (n: number, role: "user" | "assistant", text: string): Turn => ({ turnId: `t${n}`, requestId: `r${n}`, role, text });
@@ -152,5 +152,52 @@ describe("extractNote", () => {
   });
   it("uses the approved initial limits", () => {
     expect(NOTE_EXTRACTION_LIMITS).toMatchObject({ maxChars: 30000, maxOutputTokens: 4096, maxAttempts: 2, attemptTimeoutMs: 45000, totalTimeoutMs: 120000, concurrency: 3, maxChunks: 6 });
+  });
+});
+
+describe("quote repair and observation support", () => {
+  const raw = (contextItems: unknown[], detailItems: unknown[] = []) => ({ contextItems, detailItems });
+  const ev = (turnId: string, role: string, text: string) => ({ turnId, role, text });
+  it("recovers the exact original text of a formatting-only quote", () => {
+    expect(locateQuote("I went to the park yesterday.", "i went to the PARK yesterday")).toBe("I went to the park yesterday");
+    expect(locateQuote("Don't  worry  now", "don\u2019t worry")).toBe("Don't  worry");
+    expect(locateQuote("I went to the park.", "I walked to the park")).toBeNull();
+    expect(locateQuote("a b", "!")).toBeNull();
+  });
+  it("keeps an item whose quote differs only in formatting and stores the real text", () => {
+    const parsed = parseExtraction(raw([{ kind: "topic", summary: "park", evidence: [ev("t2", "user", "i go to the park yesterday")] }]), base)!;
+    expect(parsed.contextItems[0].evidence[0].text).toBe("I go to the park yesterday");
+    expect(parsed.repairedEvidence).toBe(1);
+  });
+  it("re-attributes a quote found in exactly one other turn, but drops an invented or ambiguous one", () => {
+    const moved = parseExtraction(raw([{ kind: "topic", summary: "brother", evidence: [ev("t2", "user", "I went with my brother.")] }]), base)!;
+    expect(moved.contextItems[0].evidence[0]).toEqual({ turnId: "t6", role: "user", text: "I went with my brother." });
+    const invented = parseExtraction(raw([{ kind: "topic", summary: "x", evidence: [ev("t2", "user", "I love swimming a lot")] }]), base)!;
+    expect(invented.contextItems).toEqual([]);
+    expect(invented.dropReasons.evidence).toBe(1);
+    const twice = snapshot([turn(1, "user", "I like tea."), turn(2, "user", "I like tea.")]);
+    expect(parseExtraction(raw([{ kind: "topic", summary: "x", evidence: [ev("t9", "user", "I like tea.")] }]), twice)!.contextItems).toEqual([]);
+  });
+  it("removes retry labels the record does not support, keeping the item", () => {
+    const item = (turnId: string, observations: string[]) => ({ kind: "review", summary: "past", evidence: [ev(turnId, "user", turnId === "t4" ? "I went to the park yesterday." : "I go to the park yesterday.")], observations });
+    const ok = parseExtraction(raw([item("t4", ["재시도 성공"])]), base)!;
+    expect(ok.contextItems[0].observations).toEqual(["재시도 성공"]);
+    const wrongOutcome = parseExtraction(raw([item("t4", ["재시도 실패"])]), base)!;
+    expect(wrongOutcome.contextItems[0].observations).toBeUndefined();
+    expect(wrongOutcome.strippedObservations).toBe(1);
+    const none = snapshot([turn(1, "assistant", "Say hi."), turn(2, "user", "Hi there.")]);
+    expect(parseExtraction(raw([{ kind: "review", summary: "hi", evidence: [ev("t2", "user", "Hi there.")], observations: ["재시도 성공", "질문"] }]), none)!.contextItems[0].observations).toEqual(["질문"]);
+  });
+  it("does not call a prompted echo or a recorded retry spontaneous use", () => {
+    const prompted = snapshot([turn(1, "assistant", "Try the phrase 'I would like to'."), turn(2, "user", "I would like to book a table."), turn(3, "assistant", "Where are you from?"), turn(4, "user", "I am from a small town.")]);
+    const get = (turnId: string, text: string) => parseExtraction(raw([{ kind: "review", summary: "s", evidence: [ev(turnId, "user", text)], observations: ["자발적 사용"] }]), prompted)!.contextItems[0].observations;
+    expect(get("t2", "I would like to book a table.")).toBeUndefined();
+    expect(get("t4", "I am from a small town.")).toEqual(["자발적 사용"]);
+    expect(parseExtraction(raw([{ kind: "review", summary: "s", evidence: [ev("t4", "user", "I went to the park yesterday.")], observations: ["자발적 사용"] }]), base)!.contextItems[0].observations).toBeUndefined();
+  });
+  it("drops an unknown observation label without losing the item", () => {
+    const parsed = parseExtraction(raw([{ kind: "topic", summary: "park", evidence: [ev("t2", "user", "I go to the park yesterday.")], observations: ["숙달"] }]), base)!;
+    expect(parsed.contextItems).toHaveLength(1);
+    expect(parsed.contextItems[0].observations).toBeUndefined();
   });
 });
