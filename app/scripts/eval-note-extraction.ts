@@ -18,16 +18,19 @@ if (!process.env.GOOGLE_API_KEY?.trim()) { console.error("GOOGLE_API_KEY (free l
 process.env.TALKIE_VOICE_CASCADE_TEST = "enabled";
 process.env.SONIOX_API_KEY ||= "unused-by-note-eval";
 const repeats = Number(process.env.TALKIE_NOTE_EVAL_REPEATS ?? 3);
+const only = process.env.TALKIE_NOTE_EVAL_ONLY?.split(","); // e.g. "fresh" for the added cases only
+const selected = EVAL_CASES.filter(c => !only || only.includes(c.id) || (only.includes("fresh") && c.fresh));
 const rawGenerate = createGeminiExtractionGenerate();
 // Free text-model limit seen on 2026-11-01 was 15 requests per minute, so start calls at least GAP ms apart.
 const gapMs = Number(process.env.TALKIE_NOTE_EVAL_GAP_MS ?? 6000);
 let nextStart = 0;
 const errorKinds: Record<string, number> = {};
+let rawOutputs: string[] = []; // synthetic data only; kept per run so a dropped item can be diagnosed
 const generate: ExtractionGenerate = async (request, signal) => {
   const startAt = Math.max(Date.now(), nextStart);
   nextStart = startAt + gapMs;
   if (startAt > Date.now()) await new Promise(resolve => setTimeout(resolve, startAt - Date.now()));
-  try { return await rawGenerate(request, signal); }
+  try { const text = await rawGenerate(request, signal); rawOutputs.push(text); return text; }
   catch (error) { // Record only the kind, never the error text or body.
     const kind = String((error as { upstreamStatus?: unknown }).upstreamStatus ?? (error as Error).name ?? "unknown");
     errorKinds[kind] = (errorKinds[kind] ?? 0) + 1; throw error;
@@ -37,22 +40,24 @@ const outDir = `.local/note-eval/${new Date().toISOString().replace(/[:.]/g, "-"
 mkdirSync(outDir, { recursive: true });
 let calls = 0, runs = 0, failedRuns = 0;
 const violations: { caseId: string; run: number; violation: Violation }[] = [];
-for (const testCase of EVAL_CASES) {
+for (const testCase of selected) {
   if (!testCase.expectCalls) { // The product skips the model when there is no user turn (see extractVoiceNote).
     console.log(`${testCase.id}: skipped (no user turn)`);
     continue;
   }
-  for (let run = 1; run <= repeats; run++) {
-    const result = await extractNote(testCase.snapshot, { generate, signal: AbortSignal.timeout(NOTE_EXTRACTION_LIMITS.totalTimeoutMs + 5000) });
+  for (let run = 1; run <= (testCase.minChunks ? 2 : repeats); run++) { // split cases: 2 runs (DEC-065)
+    rawOutputs = [];
+    const result = await extractNote(testCase.snapshot, { generate, ...(testCase.maxChars ? { maxChars: testCase.maxChars } : {}), signal: AbortSignal.timeout(NOTE_EXTRACTION_LIMITS.totalTimeoutMs + 5000) });
     runs++; calls += result.calls;
     if (result.totalChunks - result.failedChunks === 0) failedRuns++;
     for (const violation of checkRun(testCase, result)) violations.push({ caseId: testCase.id, run, violation });
+    if (result.droppedItems > 0) writeFileSync(`${outDir}/${testCase.id}-${run}.raw.json`, JSON.stringify(rawOutputs.map(x => { try { return JSON.parse(x); } catch { return x; } }), null, 2));
     writeFileSync(`${outDir}/${testCase.id}-${run}.json`, JSON.stringify({ title: testCase.title, expected: testCase.note, result }, null, 2));
-    console.log(`${testCase.id} #${run}: calls=${result.calls} failedChunks=${result.failedChunks} dropped=${result.droppedItems} reasons=${JSON.stringify(result.dropReasons ?? {})} repaired=${result.repairedEvidence ?? 0} stripped=${result.strippedObservations ?? 0}`);
+    console.log(`${testCase.id} #${run}: chunks=${result.totalChunks} calls=${result.calls} failedChunks=${result.failedChunks} dropped=${result.droppedItems} reasons=${JSON.stringify(result.dropReasons ?? {})} repaired=${result.repairedEvidence ?? 0} stripped=${result.strippedObservations ?? 0}`);
   }
 }
 const report = [`# 종료 노트 선별 평가 ${outDir}`, "", `호출 간격 최소 ${gapMs}ms · 실행 ${runs} · 호출 ${calls} · 구간 실패 ${failedRuns} · 오류 종류 ${JSON.stringify(errorKinds)}`, ""];
-for (const testCase of EVAL_CASES) {
+for (const testCase of selected) {
   report.push(`## ${testCase.id} · ${testCase.title}`, `기대: ${testCase.note}`, "", "입력:", ...testCase.snapshot.turns.map(x => `- ${x.turnId} ${x.role}: ${x.text}`),
     ...testCase.snapshot.corrections.map(c => `- 교정 ${c.correctionId}: ${c.sourceTurnId}→${c.deliveredTurnId} "${c.replacement}" 재시도 ${c.attempts.map(a => `${a.turnId}:${a.outcome}`).join(",") || "없음"}`), "");
 }

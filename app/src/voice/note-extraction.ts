@@ -151,10 +151,14 @@ function readContextItem(value: unknown, snapshot: ConversationSnapshot, stats: 
   const read = readEvidence(value.evidence);
   if (!read) return drop("shape");
   if (value.explanation !== undefined && typeof value.explanation !== "string") return drop("shape");
-  if (value.observations !== undefined && (!Array.isArray(value.observations) || value.observations.some(o => typeof o !== "string"))) return drop("shape");
+  if (value.observations !== undefined && !Array.isArray(value.observations)) return drop("shape");
   const evidence = repairEvidence(read, snapshot, stats);
   if (!evidence) return drop("evidence");
-  const observations = value.observations === undefined ? undefined : supportedObservations(value.observations as string[], evidence, snapshot, stats);
+  // The model sometimes writes an observation as an object such as {"type":"도움 필요"}. Read a label from a known field;
+  // any other entry is unsupported, so it is removed and counted while the item stays.
+  const labels = (value.observations as unknown[] | undefined)?.map(o => typeof o === "string" ? o
+    : isRecord(o) ? [o.type, o.label, o.observation, o.name].find((x): x is string => typeof x === "string") ?? "" : "");
+  const observations = labels === undefined ? undefined : supportedObservations(labels, evidence, snapshot, stats);
   // Turns carry no practice date, so a model-supplied date is a guess: drop the date, keep the item.
   return { kind: value.kind as NoteContextItem["kind"], summary: value.summary, evidence,
     ...(value.explanation !== undefined ? { explanation: value.explanation as string } : {}),

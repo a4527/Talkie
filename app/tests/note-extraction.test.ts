@@ -195,6 +195,12 @@ describe("quote repair and observation support", () => {
     expect(get("t4", "I am from a small town.")).toEqual(["자발적 사용"]);
     expect(parseExtraction(raw([{ kind: "review", summary: "s", evidence: [ev("t4", "user", "I went to the park yesterday.")], observations: ["자발적 사용"] }]), base)!.contextItems[0].observations).toBeUndefined();
   });
+  it("reads an observation written as an object and removes entries it cannot read, keeping the item", () => {
+    const parsed = parseExtraction(raw([{ kind: "review", summary: "past", evidence: [ev("t4", "user", "I went to the park yesterday.")], observations: [{ type: "재시도 성공", turnId: "t4" }, { turnId: "t4" }, 7] }]), base)!;
+    expect(parsed.contextItems).toHaveLength(1);
+    expect(parsed.contextItems[0].observations).toEqual(["재시도 성공"]);
+    expect(parsed.strippedObservations).toBe(2);
+  });
   it("drops an unknown observation label without losing the item", () => {
     const parsed = parseExtraction(raw([{ kind: "topic", summary: "park", evidence: [ev("t2", "user", "I go to the park yesterday.")], observations: ["숙달"] }]), base)!;
     expect(parsed.contextItems).toHaveLength(1);

@@ -6,9 +6,9 @@ const caseOf = (id: string) => EVAL_CASES.find(c => c.id === id)!;
 const empty: ExtractionRun = { contextItems: [], detailItems: [], failedChunks: 0, totalChunks: 1, oversizedChunks: 0, omittedChunks: 0, droppedItems: 0, calls: 1 };
 
 describe("synthetic note evaluation cases", () => {
-  it("has the eight approved cases with unique ids and unique turn ids", () => {
-    expect(EVAL_CASES).toHaveLength(8);
-    expect(new Set(EVAL_CASES.map(c => c.id)).size).toBe(8);
+  it("has the approved and added cases with unique ids and unique turn ids", () => {
+    expect(EVAL_CASES).toHaveLength(13);
+    expect(new Set(EVAL_CASES.map(c => c.id)).size).toBe(13);
     for (const c of EVAL_CASES) expect(new Set(c.snapshot.turns.map(t => t.turnId)).size).toBe(c.snapshot.turns.length);
   });
   it("accepts a clean result and flags each mandatory violation", () => {
