@@ -5,7 +5,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createGeminiExtractionGenerate } from "../src/server/voice-cascade";
-import { extractNote, NOTE_EXTRACTION_LIMITS } from "../src/voice/note-extraction";
+import { extractNote, NOTE_EXTRACTION_LIMITS, type ExtractionGenerate } from "../src/voice/note-extraction";
 import { EVAL_CASES, checkRun, type Violation } from "../src/voice/note-eval";
 
 if (process.env.TALKIE_NOTE_EVAL !== "gemini-free" || process.env.GEMINI_FREE_TIER_CONFIRMED !== "true") {
@@ -18,7 +18,21 @@ if (!process.env.GOOGLE_API_KEY?.trim()) { console.error("GOOGLE_API_KEY (free l
 process.env.TALKIE_VOICE_CASCADE_TEST = "enabled";
 process.env.SONIOX_API_KEY ||= "unused-by-note-eval";
 const repeats = Number(process.env.TALKIE_NOTE_EVAL_REPEATS ?? 3);
-const generate = createGeminiExtractionGenerate();
+const rawGenerate = createGeminiExtractionGenerate();
+// Free text-model limit seen on 2026-11-01 was 15 requests per minute, so start calls at least GAP ms apart.
+const gapMs = Number(process.env.TALKIE_NOTE_EVAL_GAP_MS ?? 6000);
+let nextStart = 0;
+const errorKinds: Record<string, number> = {};
+const generate: ExtractionGenerate = async (request, signal) => {
+  const startAt = Math.max(Date.now(), nextStart);
+  nextStart = startAt + gapMs;
+  if (startAt > Date.now()) await new Promise(resolve => setTimeout(resolve, startAt - Date.now()));
+  try { return await rawGenerate(request, signal); }
+  catch (error) { // Record only the kind, never the error text or body.
+    const kind = String((error as { upstreamStatus?: unknown }).upstreamStatus ?? (error as Error).name ?? "unknown");
+    errorKinds[kind] = (errorKinds[kind] ?? 0) + 1; throw error;
+  }
+};
 const outDir = `.local/note-eval/${new Date().toISOString().replace(/[:.]/g, "-")}`;
 mkdirSync(outDir, { recursive: true });
 let calls = 0, runs = 0, failedRuns = 0;
@@ -37,5 +51,11 @@ for (const testCase of EVAL_CASES) {
     console.log(`${testCase.id} #${run}: calls=${result.calls} failedChunks=${result.failedChunks} dropped=${result.droppedItems}`);
   }
 }
-console.log(JSON.stringify({ runs, calls, failedRuns, violationCount: violations.length, violations, outputs: outDir }, null, 2));
+const report = [`# 종료 노트 선별 평가 ${outDir}`, "", `호출 간격 최소 ${gapMs}ms · 실행 ${runs} · 호출 ${calls} · 구간 실패 ${failedRuns} · 오류 종류 ${JSON.stringify(errorKinds)}`, ""];
+for (const testCase of EVAL_CASES) {
+  report.push(`## ${testCase.id} · ${testCase.title}`, `기대: ${testCase.note}`, "", "입력:", ...testCase.snapshot.turns.map(x => `- ${x.turnId} ${x.role}: ${x.text}`),
+    ...testCase.snapshot.corrections.map(c => `- 교정 ${c.correctionId}: ${c.sourceTurnId}→${c.deliveredTurnId} "${c.replacement}" 재시도 ${c.attempts.map(a => `${a.turnId}:${a.outcome}`).join(",") || "없음"}`), "");
+}
+writeFileSync(`${outDir}/REPORT.md`, report.join("\n"));
+console.log(JSON.stringify({ runs, calls, failedRuns, errorKinds, gapMs, violationCount: violations.length, violations, outputs: outDir }, null, 2));
 process.exit(violations.length || failedRuns ? 1 : 0);
