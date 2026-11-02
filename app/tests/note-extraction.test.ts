@@ -104,6 +104,19 @@ describe("mergeExtractions", () => {
   it("reports all-failed input without inventing content", () => {
     expect(mergeExtractions([null, null])).toEqual({ contextItems: [], detailItems: [], failedChunks: 2, totalChunks: 2 });
   });
+  it("merges formatting variants without merging different learning content", () => {
+    const merged = mergeExtractions([
+      { contextItems: [{ kind: "review", summary: "I  went\nthere", evidence: [e("t2", "went")] }],
+        detailItems: [{ kind: "key_expression", text: "I  went there", evidence: [e("t2", "went")] }] },
+      { contextItems: [{ kind: "review", summary: "i went there", evidence: [e("t4", "went there")] },
+        { kind: "review", summary: "I went home", evidence: [e("t6", "went home")] }],
+        detailItems: [{ kind: "key_expression", text: "i went\nthere", evidence: [e("t4", "went there")] }] },
+    ]);
+    expect(merged.contextItems).toHaveLength(2);
+    expect(merged.contextItems[0].evidence).toHaveLength(2);
+    expect(merged.detailItems).toHaveLength(1);
+    expect(merged.detailItems[0].evidence).toHaveLength(2);
+  });
 });
 
 describe("extractNote", () => {

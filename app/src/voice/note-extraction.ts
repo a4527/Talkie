@@ -189,6 +189,7 @@ export function parseExtraction(raw: unknown, snapshot: ConversationSnapshot): P
 }
 
 const evidenceKey = (e: NoteEvidence) => `${e.turnId}|${e.role}|${e.text}`;
+const itemKey = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 function uniqueEvidence(list: readonly NoteEvidence[]) {
   const seen = new Set<string>();
   return list.filter(e => !seen.has(evidenceKey(e)) && seen.add(evidenceKey(e)));
@@ -205,12 +206,12 @@ export function mergeExtractions(results: readonly (NoteExtraction | null)[]): M
   for (const result of results) {
     if (!result) continue;
     for (const item of result.contextItems) {
-      const key = `${item.kind}|${item.summary.trim().toLowerCase()}`, prior = context.get(key);
+      const key = `${item.kind}|${itemKey(item.summary)}`, prior = context.get(key);
       context.set(key, !prior ? item : { ...prior, evidence: uniqueEvidence([...prior.evidence, ...item.evidence]),
         ...(prior.observations || item.observations ? { observations: [...new Set([...(prior.observations ?? []), ...(item.observations ?? [])])] } : {}) });
     }
     for (const item of result.detailItems) {
-      const key = `${item.kind}|${item.text.trim().toLowerCase()}`, prior = detail.get(key);
+      const key = `${item.kind}|${itemKey(item.text)}`, prior = detail.get(key);
       detail.set(key, !prior ? item : { ...prior, evidence: uniqueEvidence([...prior.evidence, ...item.evidence]) });
     }
   }
