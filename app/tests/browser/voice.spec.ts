@@ -1,5 +1,39 @@
 import { expect, test } from "@playwright/test";
 
+test("split voice choices fit desktop and mobile before connection", async ({ page }) => {
+  await page.goto("/voice");
+  await page.getByLabel("음성 경로").selectOption("cascade");
+  await expect(page.getByRole("combobox", { name: "STT" })).toHaveValue("soniox");
+  await expect(page.getByRole("combobox", { name: "LLM" })).toHaveValue("gemini-flash-lite");
+  await page.getByRole("combobox", { name: "TTS" }).selectOption("google-cloud-standard");
+  await expect(page.getByText("별도 Cloud 프로젝트 인증이 필요합니다.", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("split voice sends the chosen TTS when requesting a connection", async ({ page }) => {
+  let selectedTts: string | undefined;
+  await page.route("**/api/voice/cascade", async route => {
+    const input = route.request().postDataJSON();
+    if (input.action === "credential") selectedTts = input.selection?.tts;
+    await route.fulfill({ json: { temporarySttKey: "synthetic-stt", cascadeRequestToken: "synthetic-request", testDurationSeconds: 180 } });
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: async () => {
+      const context = new AudioContext(), stream = context.createMediaStreamDestination().stream;
+      for (const track of stream.getTracks()) { const stop = track.stop.bind(track); track.stop = () => { stop(); void context.close(); }; }
+      return stream;
+    } });
+  });
+  await page.routeWebSocket(/stt-rt\.soniox\.com/, () => {});
+  await page.goto("/voice");
+  await page.getByRole("combobox", { name: "음성 경로" }).selectOption("cascade");
+  await page.getByRole("combobox", { name: "TTS" }).selectOption("google-cloud-standard");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "음성 시험 시작" }).click();
+  await expect.poll(() => selectedTts).toBe("google-cloud-standard");
+  await page.getByRole("button", { name: "시험 종료" }).click();
+});
+
 test("voice test requires acknowledgement and releases the microphone after ending (fake provider)", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   let issued = 0;

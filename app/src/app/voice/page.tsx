@@ -4,6 +4,7 @@ import { requestVoiceConnectionToken } from "../../client/voice";
 import { requestLearningAction, VoiceLearningStore, type StoredVoiceSession } from "../../client/learning";
 import { apiErrorMessages } from "../../client/api-error-messages";
 import { createBrowserCascadeProviders } from "../../voice/cascade/browser-providers";
+import { cascadeSttChoices, cascadeLlmChoices, cascadeTtsChoices, defaultCascadeSelection, type CascadeSelection } from "../../voice/cascade/selection";
 import { createVoicePort } from "../../voice/create-port";
 import { VoicePlayback } from "../../voice/playback";
 import { BrowserAudio } from "../../voice/browser-audio";
@@ -24,6 +25,7 @@ type VoiceRuntime = { port: VoicePort; audio: BrowserAudio; abort: AbortControll
 export default function VoiceTest() {
   const [accepted, setAccepted] = useState(false);
   const [provider, setProvider] = useState<"gemini-live" | "cascade">("gemini-live");
+  const [cascadeSelection, setCascadeSelection] = useState<CascadeSelection>(defaultCascadeSelection);
   const [active, setActive] = useState(false);
   const [saving, setSaving] = useState(false);
   const [stored, setStored] = useState(false);
@@ -109,7 +111,7 @@ export default function VoiceTest() {
       }
       const data = provider === "cascade" ? await (async () => {
         const response = await fetch("/api/voice/cascade", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
-          body: JSON.stringify({ action: "credential", testOnly: true, ...current.persistence?.store.session }) });
+          body: JSON.stringify({ action: "credential", testOnly: true, selection: cascadeSelection, ...current.persistence?.store.session }) });
         const result = await response.json(); if (!response.ok) throw new Error(result.error); return result;
       })() : await requestVoiceConnectionToken(abort.signal, current.persistence?.store.session);
       if (runtime.current !== current) return;
@@ -159,6 +161,18 @@ export default function VoiceTest() {
       <label>음성 경로 <select value={provider} disabled={active || saving} onChange={event => setProvider(event.target.value as "cascade" | "gemini-live")}>
         <option value="gemini-live">Gemini Live</option><option value="cascade">분리형 음성</option>
       </select></label>
+      {provider === "cascade" && <div className="cascade-selectors" aria-label="분리형 공급자 선택">
+        <label>STT <select value={cascadeSelection.stt} disabled={active || saving} onChange={event => setCascadeSelection(value => ({ ...value, stt: event.target.value as CascadeSelection["stt"] }))}>
+          {cascadeSttChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+        </select></label>
+        <label>LLM <select value={cascadeSelection.llm} disabled={active || saving} onChange={event => setCascadeSelection(value => ({ ...value, llm: event.target.value as CascadeSelection["llm"] }))}>
+          {cascadeLlmChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+        </select></label>
+        <label>TTS <select value={cascadeSelection.tts} disabled={active || saving} onChange={event => setCascadeSelection(value => ({ ...value, tts: event.target.value as CascadeSelection["tts"] }))}>
+          {cascadeTtsChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+        </select></label>
+        {cascadeSelection.tts === "google-cloud-standard" && <p>Google Cloud Standard는 한국어가 포함된 답변에 한국어 음성, 그 외에는 영어 음성을 사용합니다. 별도 Cloud 프로젝트 인증이 필요합니다.</p>}
+      </div>}
       <div className="session-actions">
         <button className="primary" disabled={!accepted || active || saving} onClick={() => void start()}>음성 시험 시작</button>
         <button className="primary" disabled={!accepted || active || saving} onClick={() => void start(true)}>저장 학습 시작·이어서 하기</button>

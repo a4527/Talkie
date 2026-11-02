@@ -1,9 +1,45 @@
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
+vi.mock("../src/server/google-cloud-auth", () => ({ getCloudTtsAccessToken: vi.fn(async () => "synthetic-token") }));
 import { NonRetryableExtractionError } from "../src/voice/note-extraction";
-import { authorizeCascadeRequest, recordCascadeReply, cascadeSpeech, cascadeText, createGeminiExtractionGenerate, issueCascadeCredential } from "../src/server/voice-cascade";
+import { getCloudTtsAccessToken } from "../src/server/google-cloud-auth";
+import { authorizeCascadeRequest, recordCascadeReply, cascadeSelectionForToken, cascadeSpeech, cascadeText, createGeminiExtractionGenerate, issueCascadeCredential } from "../src/server/voice-cascade";
+import type { CascadeSelection } from "../src/voice/cascade/selection";
 afterEach(() => { vi.unstubAllEnvs(); });
 function configured() { vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000"); vi.stubEnv("TALKIE_VOICE_CASCADE_TEST", "enabled"); vi.stubEnv("SONIOX_API_KEY", "synthetic-soniox"); vi.stubEnv("GOOGLE_API_KEY", "synthetic-google"); }
+const cloudSelection: CascadeSelection = { stt: "soniox", llm: "gemini-flash-lite", tts: "google-cloud-standard" };
+function wavFixture() {
+  const wav = Buffer.alloc(48);
+  wav.write("RIFF", 0); wav.writeUInt32LE(40, 4); wav.write("WAVEfmt ", 8); wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(24000, 24); wav.writeUInt32LE(48000, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write("data", 36); wav.writeUInt32LE(4, 40);
+  wav[44] = 1; wav[46] = 2;
+  return wav;
+}
+it("binds the selected TTS to the issued connection and rejects missing Cloud setup", async () => {
+  configured();
+  const temporaryKey = vi.fn(async () => ({ ok: true, json: async () => ({ api_key: "temporary" }) })) as unknown as typeof fetch;
+  await expect(issueCascadeCredential("cloud-owner", temporaryKey, undefined, cloudSelection)).rejects.toMatchObject({ code: "VOICE_KEY_REQUIRED" });
+  expect(temporaryKey).not.toHaveBeenCalled();
+  vi.stubEnv("GOOGLE_CLOUD_PROJECT", "synthetic-project");
+  const credential = await issueCascadeCredential("cloud-owner", temporaryKey, undefined, cloudSelection);
+  expect(getCloudTtsAccessToken).toHaveBeenCalled();
+  expect(cascadeSelectionForToken(credential.cascadeRequestToken, "cloud-owner")).toEqual(cloudSelection);
+  expect(() => cascadeSelectionForToken(credential.cascadeRequestToken, "other")).toThrow();
+});
+it("sends Cloud TTS with the selected project and returns only validated PCM", async () => {
+  configured(); vi.stubEnv("GOOGLE_CLOUD_PROJECT", "synthetic-project");
+  const request = vi.fn(async () => ({ ok: true, json: async () => ({ audioContent: wavFixture().toString("base64") }) })) as unknown as typeof fetch;
+  expect(await cascadeSpeech("Hello", new AbortController().signal, request, undefined, "google-cloud-standard")).toEqual(Buffer.from([1, 0, 2, 0]));
+  const [url, options] = vi.mocked(request).mock.calls[0];
+  expect(url).toBe("https://texttospeech.googleapis.com/v1/text:synthesize");
+  expect(options?.headers).toMatchObject({ "x-goog-user-project": "synthetic-project", Authorization: "Bearer synthetic-token" });
+  expect(JSON.parse(String(options?.body)).voice.name).toBe("en-US-Standard-C");
+  await cascadeSpeech("좋아요", new AbortController().signal, request, undefined, "google-cloud-standard");
+  expect(JSON.parse(String(vi.mocked(request).mock.calls[1][1]?.body)).voice.name).toBe("ko-KR-Standard-A");
+  const invalid = vi.fn(async () => ({ ok: true, json: async () => ({ audioContent: Buffer.from("not wav").toString("base64") }) })) as unknown as typeof fetch;
+  await expect(cascadeSpeech("Hello", new AbortController().signal, invalid, undefined, "google-cloud-standard")).rejects.toThrow();
+});
 it("issues a single-use bounded STT key and limits text/speech requests", async () => {
   configured();
   const request = vi.fn(async () => ({ ok: true, json: async () => ({ api_key: "temporary" }) })) as unknown as typeof fetch;

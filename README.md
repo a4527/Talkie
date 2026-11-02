@@ -129,17 +129,25 @@ git config --local core.hooksPath .githooks
 
 음성 저장 학습 노트는 상단에 주제·난이도·복습 표현을, 하단에 근거를 담는 [노트 형식](docs/design/LEARNING-NOTE.md)을 사용합니다. 현재 자동 생성은 확인된 교정/재시도 범위이며 주제·난이도의 실제 AI 종료 추출은 후속입니다.
 
-DEC-055/056의 개발자 본인·합성 대화용 시험이다. 현재 `/voice`에서 Gemini Live와 분리형(Soniox STT → Gemini 텍스트 → Gemini TTS)을 연결 전에 선택할 수 있다. 저장 학습은 확인 전사문·구조화 교정/재시도·중단/재개·종료 후 근거 노트를 연결한다. 실제 공급자 교정 품질·전체 AI 노트 선별·공개 운영 검증은 남는다.
+DEC-055/056의 개발자 본인·합성 대화용 시험이다. 현재 `/voice`에서 Gemini Live와 분리형을 연결 전에 선택할 수 있다. 분리형은 STT Soniox·LLM Gemini를 표시하고 TTS는 Gemini 또는 Google Cloud Standard를 고른다. Soniox TTS는 별도 합성 파일 비교까지만 수행하며 앱 선택지에는 없다. 저장 학습은 확인 전사문·구조화 교정/재시도·중단/재개·종료 후 근거 노트를 연결한다. 실제 공급자 교정 품질·전체 AI 노트 선별·공개 운영 검증은 남는다.
 
 1. 기존 로컬 인증·저장 환경을 실행하고 `/account`에서 합성 `.test` 계정으로 로그인한다.
 2. AI Studio에서 사용할 키의 프로젝트가 **무료 등급**인지 직접 확인한다. 서버는 등급을 자동 조회하지 못한다. 유료 프로젝트로 바꾸면 이 시험 경로를 사용하지 않는다.
 3. `app/.env`에 `GOOGLE_API_KEY`를 설정하고 `TALKIE_VOICE_TEST=gemini-free`, `GEMINI_FREE_TIER_CONFIRMED=true`를 설정한다. 키는 서버에서만 사용하며 `NEXT_PUBLIC_` 접두사를 붙이지 않는다. 하니스의 `.env`와 별개이며 값을 문서·채팅에 복사하지 않는다.
-4. 분리형도 시험하려면 `SONIOX_API_KEY`를 서버에 설정하고 `TALKIE_VOICE_CASCADE_TEST=enabled`로 지정한다. Google 무료 등급 확인은 텍스트/TTS에도 적용되지만 Soniox STT는 별도 사용액이 발생할 수 있다. 공급자 조건은 본인·합성 음성의 비공개 로컬 시험 범위에서만 적용한다.
+4. 분리형도 시험하려면 `SONIOX_API_KEY`를 서버에 설정하고 `TALKIE_VOICE_CASCADE_TEST=enabled`로 지정한다. Gemini 무료 등급 확인은 분리형 텍스트/Gemini TTS에도 적용된다. Soniox STT와 Google Cloud TTS는 별도 사용액이 발생할 수 있다. 공급자 조건은 본인·합성 음성의 비공개 로컬 시험 범위에서만 적용한다.
 5. `cd app`에서 `npm run db:migrate`로 추가 마이그레이션을 적용하고 `npm run dev`로 서버를 재시작한 뒤 `http://127.0.0.1:3000/voice`를 연다. 음성 경로를 고르고 학습 사용 조건을 확인한 뒤 `음성 시험 시작` 또는 `저장 학습 시작·이어서 하기`를 누른다. 이어폰을 권장한다. 가상의 일상 이야기로 영어 한 문장을 말한다.
 6. 최대 3분 또는 종료 버튼·화면 이탈 시 마이크/재생/연결을 정리한다. 각 경로의 계정당 새 연결 발급은 최대 4분 간격이며 실패 시 자동 재시도하지 않는다. 메모리 전용 시험의 전사문은 화면에만 남는다. 저장 학습은 확인된 전사문/교정만 저장하고 `학습 중단` 후 같은 버튼으로 재개한다. `학습 종료` 후 근거 노트·다운로드를 확인하며 저장 실패 시 화면을 유지하면 자동 재시도한다. 원본 음성은 파일·DB·로그에 저장하지 않는다. 음성/텍스트 방식이 다른 진행 대화는 원래 화면에서 먼저 종료한다. 시험 후 두 시험 설정을 `disabled`로 되돌리면 새 연결 발급이 차단된다.
+
+Google Cloud Standard TTS를 앱에서 고르려면 Cloud Text-to-Speech API를 활성화한 프로젝트 ID를 `app/.env`의 `GOOGLE_CLOUD_PROJECT`에 넣고 로컬에서 `gcloud auth application-default login`을 한 번 완료한다. 앱은 시험 요청 때 로컬 ADC로 단기 OAuth 토큰을 자동 발급·갱신하므로 매번 `export`할 필요가 없다. `gcloud` CLI가 PATH에 없더라도 홈 디렉터리의 `google-cloud-sdk/bin/gcloud`를 찾는다. 토큰을 `.env`·Git·채팅에 저장하지 않는다. 분리형의 STT·LLM은 현재 각각 한 후보만 있으며, Google Cloud TTS는 한글 포함 여부로 한국어/영어 Standard 음성을 고르는 시험 규칙을 쓴다. 한영 혼용 품질은 미검증이다.
 
 Google 무료 API는 제품 개선·학습과 사람 검토에 데이터를 사용할 수 있다. 개인정보·민감/기밀정보나 다른 사람의 기록을 넣지 않는다. 실제 사용자 연결에는 기존 학습 금지·최대 30일 정책이 유지된다. 직접 연결 토큰은 발급 후 최대 4분 유효하며 로그아웃/탈퇴 직후 이미 연결된 공급자 세션의 강제 종료는 아직 보장하지 않는다. 공개 배포하지 않는다.
 
 검증: `cd app` 후 `npm test`, `npm run typecheck`, `npm run test:e2e -- voice.spec.ts`. 브라우저 자동 시험은 가짜 WebSocket·마이크·토큰을 사용하며 실제 AI 품질·실제 장치 검증이 아니다. 무료 프로젝트 설정 후 `npm run voice:smoke`는 실제 공급자에 고정 합성 문장 한 번을 보내 연결·음성/전사 수신을 확인한다. 이는 API를 호출하는 명령이며 출력은 청크 수·바이트 수·수신 여부뿐이다. 장치·청취·저장/노트 E2E를 검증하지 않는다. 구조와 남은 계약은 [design](docs/design/VOICE.md#포트어댑터-경계)을 따른다.
 
 구조화 교정/재시도 진단은 `espeak-ng` 설치 후 `npm run voice:smoke:learning`으로 실행한다. 실행 파일 경로는 `TALKIE_SYNTHETIC_SPEECH`로 지정할 수 있다. 고정 합성 음성을 생성하므로 입력 파일이나 실제 사용자 발화를 받지 않는다. 무료 시험 설정에서 실제 API를 호출하며 연결 하나·최대 60초·자동 재시도 없음으로 제한한다. 교정과 재시도 성공이 기록되지 않으면 실패로 종료한다. 재생 완료는 모의 신호이고 DB에는 쓰지 않는다. 시험에서만 자동 발화 감지를 끄고 합성 발화 시작/끝을 명시한다. 앱의 실제 마이크 설정은 유지한다. [프롬프트 보완 후 검증](docs/worklogs/2026-10-29.md#재시도-판정-프롬프트-보완)에서 고정 합성 사례의 교정·재시도 성공 기록을 확인했다. 전체 AI 품질·실제 장치·DB 저장 검증을 대신하지 않는다.
+
+### TTS 후보만 비교하기
+
+`cd app`에서 `npm run tts:compare -- soniox`를 실행하면 기존 `SONIOX_API_KEY`로 영어·한국어의 짧은 가상 문장 두 개를 Soniox TTS에 보내고 `app/.local/tts-compare/`에 WAV 파일을 저장한다. 실제 API 사용량이 발생할 수 있다. 문장은 고정된 합성 자료이며 사용자 기록은 보내지 않는다.
+
+Google Cloud Text-to-Speech는 Gemini Developer API와 별도 서비스다. [Google Cloud 설정 안내](https://docs.cloud.google.com/text-to-speech/docs/get-started)에 따라 프로젝트에서 결제를 연결하고 Cloud Text-to-Speech API를 활성화한 뒤 [로컬 ADC 인증](https://docs.cloud.google.com/text-to-speech/docs/authentication)을 설정한다. 프로젝트 ID를 `app/.env`의 `GOOGLE_CLOUD_PROJECT`에 넣고 `gcloud auth application-default login`을 완료한 뒤 `npm run tts:compare -- google-cloud`를 실행한다. 스크립트도 단기 토큰을 ADC에서 자동 발급하며 과금 프로젝트를 `x-goog-user-project` 요청 헤더로 지정한다. `GOOGLE_API_KEY`는 이 명령에서 사용하지 않는다. 토큰·서비스 계정 파일을 Git이나 채팅에 올리지 않는다. WAV는 로컬 Git 제외 경로에 저장된다. 두 후보의 출력은 직접 듣고 영어 교정 발음·한국어 도움·속도·자연스러움을 비교한다. 이 명령은 `/voice`의 TTS 공급자를 바꾸지 않는다.

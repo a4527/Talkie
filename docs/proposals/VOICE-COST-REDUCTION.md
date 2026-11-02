@@ -1,5 +1,22 @@
 # 음성 비용 절감 선택지와 비교
 
+## 2026-11-02 · 분리형 TTS 후속 후보 조사 (미승인)
+
+**범위와 기준.** 사용자가 보고한 Gemini TTS 무료 한도(RPM 3·RPD 10)는 해당 프로젝트 화면의 관찰이며 유료 등급 한도는 확인되지 않았다. 아래 수치는 2026-11-02에 확인한 공급자 공개 문서의 기본값 또는 요금제 값으로, Talkie 계정에 실제 배정된 한도·실측 지연·청구액이 아니다. 현행 `/voice`의 Soniox STT → Gemini 텍스트 → Gemini TTS 경로는 그대로 둔다. 기존 15분/AI 음성 6분 가정으로 산술만 비교하며, 음성 품질·한국어/영어 혼용·교정 문장의 발음은 직접 청취해야 한다.
+
+| 후보 | 공개 처리량과 단가 | 6분 음성 산술·제품 적합성의 빈칸 |
+| --- | --- | --- |
+| Soniox TTS REST/실시간 | REST 기본 100 RPM·동시 3요청·출력 최대 2분/요청. REST와 WebSocket은 TTS 동시성 풀을 공유한다. 한도 증액은 요청 가능(출력 길이 제외). 입력 텍스트 $4/100만 토큰·출력 음성 $21.50/100만 토큰([한도](https://docs.soniox.com/tts/rest-api/limits-and-quotas), [동시성](https://docs.soniox.com/guides/concurrency-limits), [가격](https://soniox.com/pricing)). | 기존 계산의 1,500 텍스트·3,000 음성 토큰을 쓰면 약 **$0.0705**. 기존 STT 공급자와 같아 계정·청구 통합에 유리하다. [영어·한국어 지원](https://docs.soniox.com/tts/concepts/supported-languages)은 확인했지만 혼용 발음, 실제 지연·계정 한도는 미시험. |
+| Google Cloud TTS Standard/WaveNet | 기본 1,000 RPM/프로젝트, Neural2도 1,000 RPM, Chirp 3 HD는 200 RPM. Standard/WaveNet $4, Neural2 $16, Chirp 3 HD $30/100만 문자([할당량](https://docs.cloud.google.com/text-to-speech/quotas), [가격](https://cloud.google.com/text-to-speech/pricing)). Gemini Developer API TTS와는 별도 서비스·과금이다. | 5,400문자 가정에 Standard/WaveNet **$0.0216**, Neural2 **$0.0864**, Chirp 3 HD **$0.162**(무료 할당량 제외). 가장 싼 음색의 학습용 발음·한영 전환 품질, 프로젝트 권한·데이터 조건은 미검증. |
+| Amazon Polly Standard/Neural/Generative | Standard $4, Neural $16, Generative $30/100만 문자([가격](https://aws.amazon.com/polly/pricing/)). `SynthesizeSpeech` 기본 한도는 리전·계정당 Standard 80 TPS, Neural/Generative 8 TPS이며 동시 요청 한도도 별도다([할당량](https://docs.aws.amazon.com/polly/latest/dg/limits.html)). [영어·한국어 음성](https://docs.aws.amazon.com/polly/latest/dg/available-voices.html)과 PCM 출력을 지원한다. | 같은 5,400문자 가정에 Standard **$0.0216**, Neural **$0.0864**, Generative **$0.162**(무료 할당량 제외). Google Cloud Standard와 공개 단가는 같다. 실제 계정 한도·리전별 음성·한영 전환 발음·지연·청구액·데이터 조건은 미확인. |
+| Cartesia Sonic 3.6 | 무료/Pro/Startup/Scale의 TTS 동시 요청 2/3/5/15개, 월 포함 음성 약 27/133/1,667/10,667분. Pro $5/월, 초과분은 등급별 별도 단가([요금·한도](https://www.cartesia.ai/pricing)). | 6분은 각 요금제의 포함량을 소비한다. 월 정액과 초과분 때문에 단일 세션 원가를 고정 단가로 표시하지 않는다. 공개 한도는 RPM이 아닌 동시성이다. 한영 혼용·지연·데이터 조건 미검증. |
+| 브라우저 `speechSynthesis` | 기기에서 [사용 가능한 음성 목록](https://developer.mozilla.org/en-US/docs/Web/API/SpeechSynthesis/getVoices)을 받는다. 공급자 TTS 호출료는 없으나 음성 선택·가용성은 기기마다 다르다. | 음성 품질·한영 전환·모바일 재생/끼어들기·재생 완료 근거 일치를 기기별로 시험해야 한다. 기기 음성이 항상 오프라인이라는 보장은 확인하지 않았다. |
+| OpenAI 기존 Speech API TTS | OpenAI Docs의 [`gpt-4o-mini-tts` 모델](https://developers.openai.com/api/docs/models/gpt-4o-mini-tts)은 Build 등급 2,000 RPM, 입력 $0.60·출력 음성 $12/100만 토큰으로 안내한다. 다만 [Speech API TTS 세 모델이 2027-01-06 종료 예정](https://developers.openai.com/api/docs/guides/text-to-speech)이며 후속은 별도 Realtime API 경로다. | 단가만으로 6분 비용을 환산할 음성 토큰량을 확인하지 않았다. 종료 일정과 API 경로 변경 때문에 현재 분리형 TTS의 장기 우선 후보로 두기 어렵다. |
+
+**다음 비교 순서 제안:** 기존 STT 공급자인 Soniox TTS와 저가 기준 Google Cloud Standard/WaveNet을 같은 합성 문장과 개발자 본인 대화로 비교한다(DEC-054의 시험 방식). Amazon Polly Standard/Neural도 같은 가격대의 TTS 요소 후보로 포함한다. DEC-053에서 제외한 것은 AWS 서비스로 구성한 분리형 경로 전체이며 Polly 단독 TTS의 조사·시험 여부는 별도다. Cartesia는 이 후보들의 발음/지연이 부족할 때 확인한다. 브라우저 음성은 기기 편차가 커 선택형 절감안으로만 살핀다. 이는 시험 우선순위 제안이며 공급자·모델·요금제 채택이 아니다. Polly 호출·계정 설정은 아직 하지 않았다.
+
+**채택 전 확인:** (1) 프로젝트/요금제의 실제 RPM·동시성·지출 차단, (2) 영어 오류 문장·교정 문장·한국어 도움·한영 혼용·끼어들기의 청취와 첫 음성/전체 재생 지연, (3) 음성/텍스트의 학습·보관·삭제·지역 조건이 [PRD 공급자 정책](../PRD.md#provider-data-policy) 및 DEC-025/052/056에 맞는지, (4) 재생 완료·취소 시 청구/근거 처리와 경로별 주간 실제 과금 대조를 확인한다. 공개 가격/언어 지원만으로 제품 적합성은 판정할 수 없다.
+
 후속: 조사 이후 Soniox STT → Gemini 텍스트 → Gemini TTS 분리형이 Gemini Live와 함께 로컬 `/voice`의 비공개 선택 경로로 통합됐다([현재 설계](../design/VOICE.md#분리형-비공개-시험-경로)). 아래 ‘후보’·‘미구현’ 표현과 비용 표는 조사 당시 제안이며 현재 구현·실측 원가를 뜻하지 않는다. 분리형 짧은 사용자 시험의 Soniox STT 사용액 외 전체 청구액은 미확인이다. 현행 이용 제한은 DEC-062의 연결 허용 시간·주간 실제 과금 대조를 따르며 아래 토큰 산술을 사용자 차감 방식으로 쓰지 않는다.
 
 **2026-11-01 추가(사용자 보고, 미확인): Gemini TTS의 분당 요청 한도.** 사용자가 무료 한도 화면에서 Gemini 3.8 Flash Lite TTS의 RPM 3·RPD 10을 확인했고(같은 화면의 Flash Lite 텍스트는 RPM 15·RPD 500, Live는 무제한 표기), 유료로 올려도 TTS의 RPM이 너무 작다고 판단해 분리형의 TTS는 **별도 모델을 다시 찾아야 한다**고 했다. 유료 등급의 실제 한도는 이 기록 작성 시 공식 문서에서 확인하지 않았다. 응답 한 번마다 TTS 요청이 한 번 필요한 현행 분리형 구조에서는 한도가 동시 사용자 수와 대화 속도를 직접 제한한다. 다음 조사 범위: TTS 후보(다른 클라우드 TTS·Soniox 등 제공 여부 확인·기기 TTS)의 요청 한도·지연·한국어/영어 품질·가격·데이터 조건. 선택은 미승인이며 조사 결과로 비교 후 합의한다.

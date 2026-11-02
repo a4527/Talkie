@@ -3,7 +3,8 @@ import { getVoiceLearningContext, validateConversationSnapshot } from "../../../
 import { withIdentity } from "../../../../server/auth";
 import { AppError } from "../../../../server/config";
 import { readJsonBody, LOGIN_SESSION_COOKIE_NAME, errorResponse, jsonResponse, requireString } from "../../../../server/http";
-import { issueCascadeCredential, authorizeCascadeRequest, recordCascadeReply, cascadeText, cascadeSpeech } from "../../../../server/voice-cascade";
+import { issueCascadeCredential, authorizeCascadeRequest, recordCascadeReply, cascadeSelectionForToken, cascadeText, cascadeSpeech } from "../../../../server/voice-cascade";
+import { parseCascadeSelection } from "../../../../voice/cascade/selection";
 export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   try {
@@ -18,7 +19,9 @@ export async function POST(request: NextRequest) {
     } else userId = await withIdentity(token, async (_tx, who) => who.userId);
     const learningSessionId = typeof input.learningSessionId === "string" ? input.learningSessionId : undefined;
     if (input.action === "credential") {
-      return jsonResponse({ ...await issueCascadeCredential(userId, fetch, learningSessionId), priorLearningContext: prior }, token);
+      const selection = parseCascadeSelection(input.selection);
+      if (!selection) throw new AppError("INVALID_REQUEST");
+      return jsonResponse({ ...await issueCascadeCredential(userId, fetch, learningSessionId, selection), priorLearningContext: prior }, token);
     }
     if (input.action === "text") {
       const release = authorizeCascadeRequest(input.cascadeRequestToken, userId, "text", learningSessionId);
@@ -34,7 +37,8 @@ export async function POST(request: NextRequest) {
       const release = authorizeCascadeRequest(input.cascadeRequestToken, userId, "speech", learningSessionId, input.text as string);
       try { const text = input.text;
         if (typeof text !== "string" || !text.trim() || text.length > 6000) throw new AppError("INVALID_REQUEST");
-        const pcm = await cascadeSpeech(text, request.signal);
+        const tts = cascadeSelectionForToken(input.cascadeRequestToken, userId, learningSessionId).tts;
+        const pcm = await cascadeSpeech(text, request.signal, fetch, undefined, tts);
         return new Response(new Uint8Array(pcm), { headers: { "Content-Type": "application/octet-stream", "Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer" } });
       } finally { release(); }
     }
