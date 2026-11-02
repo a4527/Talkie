@@ -31,17 +31,19 @@
 | <a id="dec-049"></a>`DEC-049` | DB 명명과 로그인·원문 상태 통합 | Accepted | [ADR-049](adr/049-CLEAR-DATABASE-NAMES-AND-MERGED-SESSION-STATE.md) | DEC-020/034/035/036/046/048의 사용자·데이터 경계를 유지하고 저장 구조 구체화 |
 | `DEC-055` | Gemini Live 우선 E2E와 음성 포트·어댑터 | Partially Superseded | [ADR-055](adr/055-GEMINI-LIVE-FIRST-E2E-AND-VOICE-PORT.md) | DEC-053/054의 비교 선행과 D-03 완료 후 B-09 착수 조건을 로컬 통합에 한해 대체. 후속 전 후보 비교 예정은 DEC-066이 대체 |
 | <a id="dec-056"></a>`DEC-056` | 비공개 로컬 시험의 공급자 학습 허용 | Accepted | [ADR-056](adr/056-LOCAL-TEST-PROVIDER-TRAINING-EXCEPTION.md) | DEC-025/052의 합성·본인 음성 시험 조건만 부분 대체 |
-| <a id="dec-057"></a>`DEC-057` | 이메일 링크와 Google OAuth/OIDC 로그인 병행 | Accepted | [ADR-057](adr/057-GOOGLE-LOGIN-ALONGSIDE-EMAIL.md) | DEC-020의 이메일 단독 로그인과 DEC-020/046의 재로그인 방법을 확대(2026-10-28 후속). 앱 이메일 인증·세션 관리 유지 |
+| <a id="dec-057"></a>`DEC-057` | 이메일 링크와 Google OAuth/OIDC 로그인 병행 | Accepted | [ADR-057](adr/057-GOOGLE-LOGIN-ALONGSIDE-EMAIL.md) | DEC-020의 이메일 단독 로그인과 DEC-020/046의 재로그인 방법을 확대(2026-10-28 후속). 앱 이메일 인증·세션 관리 유지. 미확정 항목은 DEC-067로 확정 |
 | <a id="dec-060"></a>`DEC-060` | 15분 강제 종료 대신 토큰 사용량 한도 | Superseded | [ADR-060](adr/060-TOKEN-USAGE-LIMITS-INSTEAD-OF-TIME-CAP.md) | DEC-059의 15분 상한을 대체했으나 토큰 한도는 DEC-062로 대체 |
 | <a id="dec-061"></a>`DEC-061` | 경로별 정규화 사용량·마무리 예약·노트 보호와 이용 안내 | Superseded | [ADR-061](adr/061-USAGE-ACCOUNTING-AND-GRACEFUL-SESSION-END.md) | 토큰 원장·예약/정산·환산식은 DEC-062로 대체. 종료 기록 정리·노트 실패 처리의 독립 계약은 PRD·DEC-024/058에 유지 |
 | <a id="dec-062"></a>`DEC-062` | 연결 허용 시간 이용권과 경로별 주간 실제 과금 대조 | Accepted | [ADR-062](adr/062-TIME-BASED-VOICE-ALLOWANCE-AND-WEEKLY-COST-REVIEW.md) | DEC-060/061의 토큰 기반 집행을 대체. DEC-063이 차감·동시성·저장 경계를 구체화. DEC-059의 짧은 회화와 DEC-024/032/058 유지 |
 | <a id="dec-063"></a>`DEC-063` | 관찰한 연결 시간 차감·단절 유예·단일 음성 연결·별도 계정 이용권 상태 | Accepted | [ADR-063](adr/063-OBSERVED-VOICE-TIME-AND-ACCOUNT-ALLOWANCE-STATE.md) | DEC-062 집행 경계 구체화. 시간 경계의 대화 마무리는 잠정 선택으로 별도 |
 | <a id="dec-066"></a>`DEC-066` | AI 후보 확장 비교 후순위와 공개 경로 검증 | Accepted | [ADR-066](adr/066-DEFER-EXPANDED-AI-CANDIDATE-COMPARISON.md) | DEC-053/054의 전 후보 시험 선행 조건과 DEC-055의 후속 비교 예정 범위 대체 |
+| <a id="dec-067"></a>`DEC-067` | Google 계정의 명시적 연결과 탈퇴 재인증 | Accepted | [ADR-067](adr/067-GOOGLE-ACCOUNT-LINKING-AND-REAUTH.md) | DEC-057의 연결·해제·탈퇴 재확인·라이브러리 미확정 항목 확정 |
 
 ## 짧은 결정
 
 - DEC-064(2026-10-31, Accepted): 종료 노트 선별은 분리형 Gemini 텍스트 모델 재사용·합성 사례 평가 기준·자동 대체 없음·원문 크기 기준 분할. DEC-062/063의 연결당 상한 부분을 변경(계정/기간 허용 시간만 유지). 수치는 미정. 아래 본문 참조.
 - DEC-065(2026-10-31, Accepted): DEC-064 종료 노트 선별의 초기 수치(구간 30,000자·출력 4,096토큰·구간당 2회·시도 45초/전체 120초·동시 3·구간 6개). 실측 전 초기값이며 실제 평가 후 조정. 아래 본문 참조.
+- DEC-068(2026-11-02, Accepted): 실제 배포 전 품질 평가를 제외한 앱 데모를 로컬 시연용으로 완성한다. 메일은 기존 Mailpit 합성 메일을 유지하고, 음성 경로는 대화 시작 화면에서 계속 고르며, 화면은 랜딩→로그인→홈→대화→피드백→노트→계정 흐름으로 통합한다. 사용자가 “로컬 시연, a, google 로그인 포함, 음성 경로는 현재처럼 선택할수 있게, 디자인은 현재 톤”과 화면 흐름 안에 동의했다. 공개 배포·실제 메일 공급자는 승인하지 않았다.
 
 각 항목은 결정일·상태와 결정·핵심 이유를 1~2줄로 남긴다. 아래 축약·이관은 2026-10-23 사용자 승인에 따른 문서 정리이며 제품 정책의 변경·폐기를 뜻하지 않는다. 상세 요구·검증 조건은 PRD·design·해당 TASK를 따른다.
 

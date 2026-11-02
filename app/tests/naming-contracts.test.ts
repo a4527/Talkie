@@ -58,7 +58,7 @@ it("passes distinct learning identifiers and credentials through the renamed rou
   vi.mocked(saveLearning).mockResolvedValue({ confirmedSaveSequenceNumber: 1 });
   expect((await learnPost(request("learn", { action: "save", learningSessionId: "synthetic-learning", learningConnectionToken: "synthetic-connection", saveSequenceNumber: 1, conversationSnapshot }))).status).toBe(200);
   expect(saveLearning).toHaveBeenCalledWith("synthetic-login", "synthetic-learning", "synthetic-connection", 1, conversationSnapshot);
-  vi.mocked(listLearningRecords).mockResolvedValue({ emailAddress: "learner@example.test", notes: [{ learningEndDateKst: "2026-10-27", noteMarkdown: "Synthetic note" }], sessions: [{ learningSessionId: "synthetic-learning", learningSessionStatus: "ended", noteGenerationStatus: "ready" }] });
+  vi.mocked(listLearningRecords).mockResolvedValue({ emailAddress: "learner@example.test", notes: [{ learningSessionId: "synthetic-learning", learningEndDateKst: "2026-10-27", noteMarkdown: "Synthetic note" }], sessions: [{ learningSessionId: "synthetic-learning", learningSessionStatus: "ended", noteGenerationStatus: "ready", demoScenario: "correction", learningSessionStartedAt: "2026-10-27T01:00:00.000Z", learningSessionEndedAt: "2026-10-27T01:10:00.000Z" }] });
   const records = await learnGet(request("learn", {}));
   expect((await records.json()).sessions[0]).toMatchObject({ learningSessionStatus: "ended", noteGenerationStatus: "ready" });
 });

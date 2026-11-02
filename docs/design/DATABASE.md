@@ -18,6 +18,7 @@
 | 지속 | `learning_sessions` | 사용자 FK·진행 상태·저장 확정 위치·연결 소유·종료/원문 기한·노트 상태. 계정당 active/interrupted 하나의 조건부 고유 인덱스와 상태/순번 CHECK |
 | 지속 | `learning_session_notes` | 학습 세션당 노트·소유자·한국 종료일·보관 기한. 학습 세션/사용자 복합 FK로 소유자 일치, 사용자/만료 인덱스 |
 | 지속 | `scheduled_jobs` | 계정/학습 세션 작업의 대상·종류·실행 시각. 소유자 FK·대상별 조건부 고유성·종류/대상 CHECK |
+| 지속 | `google_identities` | Google `sub`(PK)·연결 사용자(고유, FK cascade)·연결 시 Google 이메일·연결 시각. 계정당·`sub`당 하나([DEC-067](../adr/067-GOOGLE-ACCOUNT-LINKING-AND-REAUTH.md)) |
 | 임시 | `transcript_session_states` | 학습/사용자 ID·생성/첫 저장·삭제 기한/완료 이력. 상태와 삭제 사유의 조합 CHECK. 지속 DB에 대한 FK는 없음 |
 | 임시 | `transcript_saves` | 원문 snapshot과 해시·저장 순번. 상태 FK와 `(learning_session_id, save_sequence_number)` 복합 PK, 순번 CHECK |
 

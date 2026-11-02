@@ -11,7 +11,7 @@ export default defineConfig({
   ],
   webServer: {
     cwd: process.cwd(),
-    command: "npm run dev -- --port 3100",
+    command: process.env.TALKIE_E2E_PRODUCTION === "1" ? "npm run start -- --port 3100" : "npm run dev -- --port 3100",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: false,
     env: { NEXT_TELEMETRY_DISABLED: "1" },

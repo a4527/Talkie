@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
 async function start(page: Page, scenario = "correction") {
-  await page.goto("/");
+  await page.goto("/try");
   await page.getByLabel("학습 시나리오").selectOption(scenario);
   await page.getByRole("button", { name: "대화 시작" }).click();
   await expect(page.getByRole("button", { name: "보내기" })).toBeDisabled();
@@ -86,7 +86,7 @@ test("ending while waiting ignores late input; an empty session has no note", as
 });
 
 test("mobile/desktop layout, keyboard start and in-memory reset", async ({ page }, testInfo) => {
-  await page.goto("/");
+  await page.goto("/try");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `/tmp/talkie-${testInfo.project.name}-welcome.png`, fullPage: true });
@@ -98,4 +98,14 @@ test("mobile/desktop layout, keyboard start and in-memory reset", async ({ page 
   await expect(page.getByRole("button", { name: "대화 시작" })).toBeVisible();
   await expect(page.getByRole("log")).toHaveCount(0);
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
+});
+
+test("signed-out landing links to login and the login-free trial without horizontal scroll", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("link", { name: "로그인 없이 체험하기" })).toHaveAttribute("href", "/try");
+  await expect(page.getByRole("link", { name: /시작하기/ })).toHaveAttribute("href", "/login");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.goto("/learn");
+  await expect(page).toHaveURL(/\/talk$|\/login$/);
 });

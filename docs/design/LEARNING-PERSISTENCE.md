@@ -2,7 +2,7 @@
 
 갱신일: 2026-10-29. `/learn`의 가짜 AI·합성 대화와 `/voice`의 비공개 저장 학습이 같은 저장/재개 계약을 사용한다. 음성 확인 범위는 [VOICE](VOICE.md#생성재생전사-범위)를 따른다. 사용자 동작·보관 기한은 [PRD 6·8절](../PRD.md#6-대화-상태와-예외)을 따르며 데이터 모델은 [DATABASE](DATABASE.md)와 연결한다.
 
-구현: [클라이언트 저장](../../app/src/app/learn/page.tsx), [학습 상태](../../app/src/learning/session.ts), [저장/노트 서비스](../../app/src/server/learning.ts), [원문 수명](../../app/src/server/db/transcripts-lifecycle.ts), [기한 작업](../../app/src/server/maintenance.ts).
+구현: [클라이언트 저장](../../app/src/components/stored-text-conversation.tsx)·[음성 저장](../../app/src/components/use-voice-learning.ts), [학습 상태](../../app/src/learning/session.ts), [저장/노트 서비스](../../app/src/server/learning.ts), [원문 수명](../../app/src/server/db/transcripts-lifecycle.ts), [기한 작업](../../app/src/server/maintenance.ts).
 
 ## 확인된 기록과 연결 소유
 

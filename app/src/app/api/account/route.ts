@@ -1,12 +1,14 @@
 import { NextRequest } from "next/server";
 import { consumeLink, deleteAccount, inspectLink, logout, requestLink, withIdentity } from "../../../server/auth";
 import { AppError } from "../../../server/config";
+import { emailLoginAvailable, googleLinkStatus, googleLoginAvailable, unlinkGoogle } from "../../../server/google-auth";
 import { readJsonBody, LOGIN_SESSION_COOKIE_NAME, errorResponse, jsonResponse, requireString } from "../../../server/http";
 export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   try {
     const loginSessionToken = request.cookies.get(LOGIN_SESSION_COOKIE_NAME)?.value;
-    const who = await withIdentity(loginSessionToken, async (_tx, who) => ({ emailAddress: who.emailAddress }));
+    const who = await withIdentity(loginSessionToken, async (tx, who) => ({ emailAddress: who.emailAddress, google: await googleLinkStatus(tx, who.userId) ?? null,
+      emailLoginAvailable: emailLoginAvailable(who.emailAddress), googleLoginAvailable: googleLoginAvailable() }));
     return jsonResponse(who, loginSessionToken);
   } catch (error) { return errorResponse(error); }
 }
@@ -23,6 +25,7 @@ export async function POST(request: NextRequest) {
         const result = await consumeLink(requireString(data.authLinkToken), loginSessionToken);
         return jsonResponse({ purpose: result.purpose }, result.purpose === "login" ? result.loginSessionToken : loginSessionToken);
       }
+      case "unlink_google": await unlinkGoogle(loginSessionToken); return jsonResponse({ ok: true }, loginSessionToken);
       case "logout": await logout(loginSessionToken); return jsonResponse({ ok: true }, "", 0);
       case "delete": await deleteAccount(loginSessionToken); return jsonResponse({ ok: true }, "", 0);
       default: throw new AppError("INVALID_REQUEST");

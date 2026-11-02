@@ -1,6 +1,6 @@
 # 인증 설계
 
-갱신일: 2026-10-28. 현재 구현은 루프백 환경과 합성 `.test` 이메일의 링크 인증이다. 로그인 유지·링크/탈퇴 기한·발송 정책은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지), 앱 직접 인증의 채택 근거는 [ADR-026](../adr/026-APP-MANAGED-EMAIL-LINK-AUTHENTICATION.md)을 따른다.
+갱신일: 2026-11-02. 현재 구현은 루프백 환경의 합성 `.test` 이메일 링크 인증과 Google OIDC 로그인(실제 클라이언트 미검증)이다. 로그인 유지·링크/탈퇴 기한·발송 정책은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지), 앱 직접 인증의 채택 근거는 [ADR-026](../adr/026-APP-MANAGED-EMAIL-LINK-AUTHENTICATION.md)을 따른다.
 
 구현: [auth.ts](../../app/src/server/auth.ts), [HTTP·쿠키](../../app/src/server/http.ts), [이메일 입력 제한](../../app/src/server/config.ts), [확인 화면](../../app/src/app/account/confirm/page.tsx). HTTP 요청·응답은 [API](API.md#계정-api), 물리 테이블은 [DATABASE](DATABASE.md)를 따른다.
 
@@ -33,6 +33,17 @@
 
 합성 동시성·브라우저 검증과 한계는 [2026-10-23](../worklogs/2026-10-23.md), [2026-10-25](../worklogs/2026-10-25.md), [2026-10-27](../worklogs/2026-10-27.md)을 따른다. 실제 메일 서비스·전달/반송·운영 권한과 인증 검증, 확인 성공 뒤 응답/쿠키 유실의 복구 상세, 장기 연결 차단은 남는다. 운영 검증 완료를 뜻하지 않는다.
 
-## Google 로그인: 승인된 미구현 범위
+<a id="google-로그인-승인된-미구현-범위"></a>
 
-이메일 링크와 Google OAuth/OIDC를 함께 제공하고 제공자 인증 이후 앱 계정·학습 기록·세션은 공통으로 관리한다([DEC-057](../adr/057-GOOGLE-LOGIN-ALONGSIDE-EMAIL.md)). 최초 로그인·세션 만료 후·과거 백업 복원 후 재로그인에 이메일 링크와 Google을 모두 지원하는 것이 승인된 제품 계약이다. 현재 로컬 구현은 합성 이메일 링크만 지원하며 Google 로그인 구현·매핑 스키마·라이브러리 선택은 없다. 계정 연결·중복 가입·연결 해제, Google 전용 가입자의 이메일 확보·탈퇴 재확인과 콜백 보안 상세는 D-02에서 합의한다. 이메일 일치 자동 병합은 채택하지 않았다. Gemini 음성 API 키·단기 토큰과 소셜 로그인 자격은 별개다.
+## Google 로그인
+
+이메일 링크와 Google OAuth/OIDC를 함께 제공하고 제공자 인증 이후 앱 계정·학습 기록·세션은 공통으로 관리한다([DEC-057](../adr/057-GOOGLE-LOGIN-ALONGSIDE-EMAIL.md)). 연결·해제·탈퇴 재인증 정책은 [DEC-067](../adr/067-GOOGLE-ACCOUNT-LINKING-AND-REAUTH.md)과 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다. 구현: [google-auth.ts](../../app/src/server/google-auth.ts), [시작](../../app/src/app/api/auth/google/start/route.ts)·[콜백](../../app/src/app/api/auth/google/callback/route.ts) 라우트. Gemini 음성 API 키·단기 토큰과 소셜 로그인 자격은 별개다.
+
+1. `GOOGLE_OAUTH_CLIENT_ID`·`GOOGLE_OAUTH_CLIENT_SECRET`이 모두 있을 때만 켠다. 리디렉션 URI는 `APP_ORIGIN` + `/api/auth/google/callback`이며 요청의 Host·전달 헤더로 만들지 않는다.
+2. 시작 요청은 목적(`login`·`link`·`reauth`)별로 state·nonce·PKCE 검증값을 만들어 `/api/auth/google` 경로 한정 httpOnly·SameSite=Lax 쿠키에 10분 보관한다. 교차 사이트 탐색(`Sec-Fetch-Site: cross-site`)은 시작하지 않는다. `link`·`reauth`는 시작한 로그인 세션 ID를 함께 기록하고 콜백에서 같은 세션인지 확인한다. `link`·`reauth`는 `prompt=select_account`로 계정 선택을 요구한다.
+3. 콜백은 `openid-client`로 인가 코드를 교환하고 state·nonce·PKCE·ID 토큰의 iss/aud/exp를 검증한다. 상태 쿠키는 결과와 관계없이 지운다.
+4. 계정 적용은 Google `sub` 단위 advisory lock 아래 한 트랜잭션에서 한다. 연결된 `sub`이면 그 계정으로 새 로그인 세션을 발급한다(탈퇴 확정 계정 거부, 다른 계정 로그인 중이면 `LOGOUT_FIRST`). 연결이 없으면 `email_verified`인 이메일로 새 계정과 연결을 만들고, 같은 이메일의 계정이 있으면 `GOOGLE_EMAIL_IN_USE`로 거부한다.
+5. `link`는 계정당 하나, `sub`당 하나만 허용한다. `reauth`는 연결된 `sub`과 일치할 때만 현재 로그인 세션에 이메일 링크와 같은 10분 탈퇴 권한을 기록한다. Google은 `auth_time`·`prompt=login`을 제공하지 않으므로 비밀번호 재입력은 강제하지 못한다.
+6. 연결 해제는 계정 이메일이 현재 메일 경로(로컬은 `.test`)로 로그인 가능할 때만 허용한다. 탈퇴 확정 후 연결 행은 사용자 삭제 작업에서 함께 지워진다.
+
+검증: 가짜 신원으로 생성·재로그인·미확인 이메일·같은 이메일 거부·연결/중복 연결·세션 불일치·재인증 불일치/성공·탈퇴 후 거부·해제 제한을 서버 시험으로 확인했다([2026-11-02](../worklogs/2026-11-02.md#로컬-앱-데모-통합)). 실제 Google OAuth 클라이언트로의 정상·취소·실패 흐름은 미검증이다.

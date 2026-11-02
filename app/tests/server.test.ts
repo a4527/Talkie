@@ -10,6 +10,8 @@ import { deleteTranscriptSource } from "../src/server/db/transcripts-lifecycle";
 import { consumeLink, deleteAccount, dbNow, digest, inspectLink, logout, requestLink, withIdentity, type Mail } from "../src/server/auth";
 import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
+import { completeGoogleAuth, unlinkGoogle, type GoogleOAuthState } from "../src/server/google-auth";
+import { googleIdentities } from "../src/server/db/records-schema";
 import type { ExtractionGenerate } from "../src/voice/note-extraction";
 import { priorLearningWindow } from "../src/voice/prior-learning";
 import { boundRecords } from "../src/learning/buffer";
@@ -207,6 +209,39 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     await assert.rejects(consumeLink(secret(), raw), /LOGOUT_FIRST/);
     assert.equal((await withIdentity(raw, async (_tx, who) => who.emailAddress)), "a@example.test");
   });
+  it("applies Google identities with explicit linking only, Google reauthentication and guarded unlinking (DEC-067)", async () => {
+    const flow = (purpose: GoogleOAuthState["purpose"], loginSessionId?: string): GoogleOAuthState => ({ purpose, state: "s".repeat(43), nonce: "n".repeat(43), codeVerifier: "v".repeat(43), loginSessionId });
+    const sessionId = (raw: string) => withIdentity(raw, async (_tx, who) => who.loginSessionId);
+    // A new verified Google user gets a new account with the Google email.
+    const created = await completeGoogleAuth(flow("login"), { sub: "google-sub-new", email: "New.Person@Gmail.COM", email_verified: true }, undefined);
+    assert.ok("loginSessionToken" in created);
+    assert.equal(await withIdentity(created.loginSessionToken, async (_tx, who) => who.emailAddress), "New.Person@gmail.com");
+    const again = await completeGoogleAuth(flow("login"), { sub: "google-sub-new", email: "changed@gmail.com", email_verified: true }, undefined);
+    assert.equal(await withIdentity((again as { loginSessionToken: string }).loginSessionToken, async (_tx, who) => who.emailAddress), "New.Person@gmail.com");
+    // Unverified emails never create accounts.
+    await assert.rejects(completeGoogleAuth(flow("login"), { sub: "google-sub-unverified", email: "x@gmail.com", email_verified: false }, undefined), /GOOGLE_EMAIL_UNVERIFIED/);
+    // Same email as an email-link account: refused, not merged.
+    const emailUser = await login("linker@example.test");
+    await assert.rejects(completeGoogleAuth(flow("login"), { sub: "google-sub-linker", email: "linker@example.test", email_verified: true }, undefined), /GOOGLE_EMAIL_IN_USE/);
+    assert.equal((await databases().records.select().from(googleIdentities).where(eq(googleIdentities.googleSubject, "google-sub-linker"))).length, 0);
+    // Linking requires the session that started the flow.
+    await assert.rejects(completeGoogleAuth(flow("link", randomUUID()), { sub: "google-sub-linker", email: "linker@gmail.com", email_verified: true }, emailUser), /ORIGINAL_BROWSER_REQUIRED/);
+    await completeGoogleAuth(flow("link", await sessionId(emailUser)), { sub: "google-sub-linker", email: "linker@gmail.com", email_verified: true }, emailUser);
+    const viaGoogle = await completeGoogleAuth(flow("login"), { sub: "google-sub-linker", email: "linker@gmail.com", email_verified: true }, undefined);
+    assert.equal(await withIdentity((viaGoogle as { loginSessionToken: string }).loginSessionToken, async (_tx, who) => who.emailAddress), "linker@example.test");
+    await assert.rejects(completeGoogleAuth(flow("link", await sessionId(emailUser)), { sub: "google-sub-other", email: "o@gmail.com", email_verified: true }, emailUser), /GOOGLE_ALREADY_LINKED/);
+    await assert.rejects(completeGoogleAuth(flow("login"), { sub: "google-sub-new", email: "New.Person@gmail.com", email_verified: true }, emailUser), /LOGOUT_FIRST/);
+    // Google-only accounts keep their only login method; email-capable accounts may unlink.
+    await assert.rejects(unlinkGoogle(created.loginSessionToken), /GOOGLE_ONLY_ACCOUNT/);
+    // Reauthentication must match the linked subject, then grants the usual 10-minute deletion authority.
+    await assert.rejects(completeGoogleAuth(flow("reauth", await sessionId(created.loginSessionToken)), { sub: "google-sub-linker", email: "linker@gmail.com", email_verified: true }, created.loginSessionToken), /GOOGLE_REAUTH_MISMATCH/);
+    await assert.rejects(deleteAccount(created.loginSessionToken), /CONFIRM_DELETE_FIRST/);
+    await completeGoogleAuth(flow("reauth", await sessionId(created.loginSessionToken)), { sub: "google-sub-new", email: "New.Person@gmail.com", email_verified: true }, created.loginSessionToken);
+    await deleteAccount(created.loginSessionToken);
+    await assert.rejects(completeGoogleAuth(flow("login"), { sub: "google-sub-new", email: "New.Person@gmail.com", email_verified: true }, undefined), /GOOGLE_ACCOUNT_UNAVAILABLE/);
+    await unlinkGoogle(emailUser);
+    assert.equal((await databases().records.select().from(googleIdentities).where(eq(googleIdentities.googleSubject, "google-sub-linker"))).length, 0);
+  });
   it("stores and resumes voice evidence, isolates its connection and finalizes a voice note", async () => {
     const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
     process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
@@ -230,11 +265,27 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       await assert.rejects(completeLearningNote(raw, resumed.learningSessionId, { generate: down }), /NOTE_PENDING/);
       assert.ok(attempts > 0);
       assert.equal((await listLearningRecords(raw)).notes.length, 0, "no fallback note when the model fails");
+      const emptyReply: ExtractionGenerate = async () => JSON.stringify({ contextItems: [], detailItems: [] });
+      await assert.rejects(completeLearningNote(raw, resumed.learningSessionId, { generate: emptyReply }), /NOTE_PENDING/);
+      assert.equal((await listLearningRecords(raw)).notes.length, 0, "an empty model result must not complete a note");
+      let savedDuringExtraction = false;
+      const staleReply: ExtractionGenerate = async () => {
+        if (!savedDuringExtraction) {
+          savedDuringExtraction = true;
+          await saveLearning(raw, resumed.learningSessionId, resumed.learningConnectionToken, 2, {
+            ...snapshot, turns: [{ turnId: "user-2", requestId: "request-2", role: "user", text: "A final saved turn." }], corrections: [],
+          });
+        }
+        return JSON.stringify({ contextItems: [], detailItems: [{ kind: "summary", text: "Old input only", evidence: [{ turnId: "user-1", role: "user", text: "I go yesterday." }] }] });
+      };
+      await assert.rejects(completeLearningNote(raw, resumed.learningSessionId, { generate: staleReply }), /NOTE_PENDING/);
+      assert.equal((await listLearningRecords(raw)).notes.length, 0, "a save during extraction must not finalize an outdated note");
       const reply: ExtractionGenerate = async () => JSON.stringify({ contextItems: [], detailItems: [{ kind: "summary", text: "Past tense practice", evidence: [{ turnId: "user-1", role: "user", text: "I go yesterday." }] }] });
       await completeLearningNote(raw, resumed.learningSessionId, { generate: reply });
       const notes = (await listLearningRecords(raw)).notes;
       assert.equal(notes.length, 1); assert.match(notes[0].noteMarkdown, /비공개 음성 통합 시험/);
       assert.match(notes[0].noteMarkdown, /Past tense practice/);
+      assert.match(notes[0].noteMarkdown, /A final saved turn/);
       assert.match(notes[0].noteMarkdown, /Synthetic test correction/);
       assert.equal((await databases().transcripts.select().from(transcriptSaves)).length, 0);
       const next = await startLearning(raw, "voice");

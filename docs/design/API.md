@@ -1,6 +1,6 @@
 # 로컬 API 계약
 
-갱신일: 2026-10-29. 현재 로컬 합성 이메일·가짜 AI 저장 API와 비공개 음성 시험 API의 구현 설명이다. Google OAuth/OIDC 로그인 API와 운영 음성 API는 미구현이다. 로그인 조건은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다.
+갱신일: 2026-11-02. 현재 로컬 합성 이메일·Google OIDC 로그인·저장 학습 API와 비공개 음성 API의 구현 설명이다. 운영 음성 API는 미구현이다. 로그인 조건은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다.
 
 ## 공통 요청·응답
 
@@ -15,7 +15,7 @@
 
 구현: [account 라우트](../../app/src/app/api/account/route.ts), [인증 서비스](../../app/src/server/auth.ts).
 
-`GET /api/account`는 로그인한 계정의 `{emailAddress}`를 반환하고 로그인 쿠키를 갱신한다.
+`GET /api/account`는 로그인한 계정의 `{emailAddress, google, emailLoginAvailable, googleLoginAvailable}`을 반환하고 로그인 쿠키를 갱신한다. `google`은 연결 시 `{googleEmailAddress}`, 아니면 `null`이다.
 
 `POST /api/account`는 다음 `action`을 받는다. 인증이 필요한 동작은 유효한 로그인 쿠키를 함께 요구한다.
 
@@ -24,16 +24,28 @@
 | `request` | `emailAddress`, `purpose: login 또는 account_deletion` | `{accepted: true}`. 탈퇴 목적은 본인 로그인 필요. SMTP 수신자 전달 완료의 증거는 아님 |
 | `inspect` | `authLinkToken` | `{emailAddress, purpose}`. 링크 유효성·대상 조회이며 소비하지 않음 |
 | `confirm` | `authLinkToken` | `{purpose}`. 로그인 목적이면 새 로그인 쿠키, 탈퇴 재확인이면 기존 브라우저의 세션에 권한 연결 |
+| `unlink_google` | 없음 | `{ok: true}`. 이메일 로그인이 가능한 계정만 허용, 아니면 `GOOGLE_ONLY_ACCOUNT` |
 | `logout` | 없음 | `{ok: true}`, 로그인 쿠키 제거 |
 | `delete` | 없음 | `{ok: true}`, 로그인 쿠키 제거. 기존 로그인과 탈퇴 재확인 권한 필요 |
 
 링크 화면의 GET은 인증을 소비하지 않는다. 로그인 상태의 다른 계정을 자동 교체하지 않으며 탈퇴 재확인은 원래 요청한 브라우저에 귀속한다. 처리 순서·기한 판정은 [인증 흐름](AUTHENTICATION.md#이메일-링크와-세션-처리)을 따른다.
 
+### Google 로그인 라우트
+
+구현: [시작](../../app/src/app/api/auth/google/start/route.ts), [콜백](../../app/src/app/api/auth/google/callback/route.ts). 둘 다 브라우저 탐색용 GET이며 JSON 대신 리디렉션으로 응답한다.
+
+| 경로 | 입력 | 결과 |
+| --- | --- | --- |
+| `GET /api/auth/google/start` | `purpose=login·link·reauth` (`link`·`reauth`는 로그인 필요) | Google 인가 화면으로 이동, OAuth 상태 쿠키 설정. 실패 시 `/login` 또는 `/account`에 `?error=코드` |
+| `GET /api/auth/google/callback` | Google이 붙인 `code`·`state` | 로그인 성공 `/home`(로그인 쿠키 발급), 연결 `/account?google=linked`, 재인증 `/account?google=reauthenticated`, 실패 시 `?error=코드` |
+
+오류 코드는 `GOOGLE_LOGIN_DISABLED`·`GOOGLE_AUTH_EXPIRED`·`GOOGLE_AUTH_CANCELLED`·`GOOGLE_AUTH_FAILED`·`GOOGLE_EMAIL_UNVERIFIED`·`GOOGLE_EMAIL_IN_USE`·`GOOGLE_ACCOUNT_UNAVAILABLE`·`GOOGLE_ALREADY_LINKED`·`GOOGLE_LINKED_ELSEWHERE`·`GOOGLE_REAUTH_MISMATCH`·`LOGOUT_FIRST`·`ORIGINAL_BROWSER_REQUIRED`다. 처리 규칙은 [인증 설계](AUTHENTICATION.md#google-로그인)를 따른다.
+
 ## 학습 API
 
 구현: [learn 라우트](../../app/src/app/api/learn/route.ts), [학습 서비스](../../app/src/server/learning.ts), [브라우저 조회 타입](../../app/src/learning/types.ts). 과거 `/api/learning` alias는 제공하지 않는다.
 
-`GET /api/learn`은 로그인한 계정의 `{emailAddress, sessions, notes}`를 반환한다. 세션은 `learningSessionId`·`learningSessionStatus`·`noteGenerationStatus`·`learningSessionEndedAt`, 노트는 `learningEndDateKst`·`noteMarkdown`을 포함한다. 서버 응답의 종료 시각은 브라우저 조회 타입에 명시된 필드 집합보다 넓다. 만료 노트와 다른 계정의 기록은 조회하지 않는다.
+`GET /api/learn`은 로그인한 계정의 `{emailAddress, sessions, notes}`를 반환한다. 세션은 시작 시각 내림차순으로 `learningSessionId`·`learningSessionStatus`·`noteGenerationStatus`·`demoScenario`·`learningSessionStartedAt`·`learningSessionEndedAt`(ISO 문자열, 미종료는 `null`), 노트는 종료일 내림차순으로 `learningSessionId`·`learningEndDateKst`·`noteMarkdown`을 포함한다. 화면은 세션 ID로 종료 직후 피드백의 노트를 찾는다. 만료 노트와 다른 계정의 기록은 조회하지 않는다.
 
 `POST /api/learn`은 모두 로그인 쿠키를 요구한다.
 

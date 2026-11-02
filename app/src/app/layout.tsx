@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Talkie · 오늘의 작은 영어 대화",
-  description: "가짜 AI와 함께 첫 학습 흐름을 확인하는 로컬 텍스트 데모",
+  description: "짧은 영어 음성 대화와 표현 연습, 근거 기반 학습 노트를 제공하는 로컬 데모",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

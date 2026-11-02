@@ -93,6 +93,6 @@ export type ConversationSnapshot = Pick<LearningSessionState, "turns" | "correct
 // Browser-safe response fields; no credentials, database rows or server imports.
 export interface LearningRecordsResponse {
   emailAddress: string;
-  notes: { learningEndDateKst: string; noteMarkdown: string }[];
-  sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string }[];
+  notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];
+  sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null }[];
 }

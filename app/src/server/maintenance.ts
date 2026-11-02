@@ -63,6 +63,7 @@ export async function maintenance(deps: NoteDeps = {}) {
           const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
           const [row] = await tx.select().from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId)).for("update");
           if (!user || !row) return;
+          if (row.confirmedSaveSequenceNumber !== due.confirmedSaveSequenceNumber) return;
           await finalizeLearningNote(tx, row, extraction);
           const [fresh] = await tx.select({ status: learningSessions.noteGenerationStatus }).from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId));
           // A failed extraction keeps its job so the next pass retries before the deadline.

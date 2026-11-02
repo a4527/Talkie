@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { locateQuote, NOTE_EXTRACTION_LIMITS, NonRetryableExtractionError, buildExtractionInput, extractNote, mergeExtractions, parseExtraction, snapshotChars, splitSnapshotBySize, type ExtractionGenerate } from "../src/voice/note-extraction";
 import type { ConversationSnapshot, Turn } from "../src/learning/types";
+import { buildVoiceNoteMarkdown } from "../src/voice/note";
+import { EVAL_CASES } from "../src/voice/note-eval";
 
 const turn = (n: number, role: "user" | "assistant", text: string): Turn => ({ turnId: `t${n}`, requestId: `r${n}`, role, text });
 const snapshot = (turns: Turn[], corrections: ConversationSnapshot["corrections"] = []): ConversationSnapshot =>
@@ -37,6 +39,14 @@ describe("splitSnapshotBySize", () => {
   });
 });
 
+it("retains every recorded outcome for a correction even when the model omits them", () => {
+  const recorded = EVAL_CASES.find(c => c.id === "retry-mixed")!.snapshot;
+  const note = buildVoiceNoteMarkdown(recorded, "2026-11-02T00:00:00Z", [], { details: [], incomplete: false })!;
+  expect(note).toContain("재시도 t4: AI 판정 실패");
+  expect(note).toContain("재시도 t6: AI 판정 성공");
+  expect(note).not.toContain("재시도 t8:");
+});
+
 describe("parseExtraction", () => {
   const ev = (id: string, role: "user" | "assistant", text: string) => ({ turnId: id, role, text });
   it("keeps valid items and drops invalid ones independently", () => {
@@ -64,6 +74,11 @@ describe("parseExtraction", () => {
     const parsed = parseExtraction({ contextItems: [{ kind: "review", summary: "went", observations: ["재시도 성공"],
       evidence: [ev("t4", "user", "I went")], lastPracticedDateKst: "2026-10-30" }], detailItems: [] }, base)!;
     expect(parsed.contextItems[0].lastPracticedDateKst).toBeUndefined();
+  });
+  it("does not turn an assistant-only prompt into a topic the learner discussed", () => {
+    const parsed = parseExtraction({ contextItems: [{ kind: "topic", summary: "park trip", evidence: [ev("t1", "assistant", "What did you do today?")] }], detailItems: [] }, base)!;
+    expect(parsed.contextItems).toEqual([]);
+    expect(parsed.dropReasons.topic_without_user).toBe(1);
   });
   it("does not execute instruction-like text and rejects wrong evidence role or turn", () => {
     const parsed = parseExtraction({ contextItems: [

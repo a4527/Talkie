@@ -60,3 +60,8 @@ export const scheduledJobs = pgTable("scheduled_jobs", {
   index("scheduled_job_user").on(t.targetUserId),
   check("scheduled_job_target", sql`(${t.jobType} = 'delete_account' and ${t.targetLearningSessionId} is null) or (${t.jobType} = 'note' and ${t.targetLearningSessionId} is not null)`),
 ]);
+/** Google OIDC subject linked to one app account (DEC-067). Removed with the user row. */
+export const googleIdentities = pgTable("google_identities", {
+  googleSubject: text("google_subject").primaryKey(), userId: uuid("user_id").notNull().unique().references(() => users.userId, { onDelete: "cascade" }),
+  googleEmailAddress: text("google_email_address").notNull(), googleIdentityLinkedAt: time("google_identity_linked_at").notNull(),
+});

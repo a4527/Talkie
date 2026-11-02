@@ -5,7 +5,7 @@ import { buildVoiceNoteMarkdown } from "../voice/note";
 import { extractNote, NOTE_EXTRACTION_LIMITS, type ExtractionGenerate, type ExtractionRun } from "../voice/note-extraction";
 import { createGeminiExtractionGenerate } from "./voice-cascade";
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
@@ -189,7 +189,7 @@ export async function extractVoiceNote(row: LearningRow, deps: NoteDeps = {}): P
     if (!snapshot.turns.some(t => t.role === "user")) return { contextItems: [], detailItems: [], failedChunks: 0, totalChunks: 0, oversizedChunks: 0, omittedChunks: 0, droppedItems: 0, calls: 0 };
     const run = await extractNote(snapshot, { generate: deps.generate ?? createGeminiExtractionGenerate(), signal: AbortSignal.timeout(NOTE_EXTRACTION_LIMITS.totalTimeoutMs + 5000) });
     // No fallback note: with no usable chunk the session stays pending for a later retry before the deadline.
-    return run.totalChunks - run.failedChunks > 0 ? run : null;
+    return run.totalChunks - run.failedChunks > 0 && (run.contextItems.length > 0 || run.detailItems.length > 0) ? run : null;
   } catch { return null; }
 }
 /**
@@ -212,7 +212,7 @@ export async function finalizeLearningNote(tx: RecordsTransaction, row: Learning
   const conversationSnapshot = await readConfirmed(row);
   const endedAt = row.learningSessionEndedAt.toISOString();
   const noteMarkdown = row.demoScenario === "voice"
-    ? buildVoiceNoteMarkdown(conversationSnapshot, endedAt, extraction!.contextItems, { details: extraction!.detailItems, incomplete: extraction!.failedChunks > 0 || extraction!.omittedChunks > 0 })
+    ? buildVoiceNoteMarkdown(conversationSnapshot, endedAt, extraction!.contextItems, { details: extraction!.detailItems, incomplete: extraction!.failedChunks > 0 || extraction!.omittedChunks > 0 || extraction!.droppedItems > 0 })
     : buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
   if (noteMarkdown) await tx.insert(learningSessionNotes).values({ learningSessionId: row.learningSessionId, userId: row.userId, learningEndDateKst: formatKstDate(endedAt), noteMarkdown,
     noteRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + 30 * DAY) }).onConflictDoNothing();
@@ -233,6 +233,7 @@ export async function completeLearningNote(loginSessionToken: string | undefined
     // 3) Short transaction: the row is locked again and its state re-read, so a concurrent finish or expiry wins.
     await withIdentity(loginSessionToken, async (tx, who) => {
       const row = await requireOwnedLearningSession(tx, who, learningSessionId);
+      if (!settled(row.noteGenerationStatus) && row.confirmedSaveSequenceNumber !== pending.confirmedSaveSequenceNumber) throw new AppError("NOTE_PENDING", 503);
       await finalizeLearningNote(tx, row, extraction);
     });
     if (!extraction) throw new AppError("NOTE_PENDING", 503);
@@ -245,10 +246,13 @@ export async function completeLearningNote(loginSessionToken: string | undefined
 export async function listLearningRecords(loginSessionToken: string | undefined): Promise<LearningRecordsResponse> {
   return withIdentity(loginSessionToken, async (tx, who) => {
     const now = await dbNow(tx);
-    const sessions = await tx.select({ learningSessionId: learningSessions.learningSessionId, learningSessionStatus: learningSessions.learningSessionStatus, noteGenerationStatus: learningSessions.noteGenerationStatus, learningSessionEndedAt: learningSessions.learningSessionEndedAt })
-      .from(learningSessions).where(eq(learningSessions.userId, who.userId));
-    const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`));
-    return { emailAddress: who.emailAddress, sessions, notes: saved.map(n => ({ learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
+    const rows = await tx.select({ learningSessionId: learningSessions.learningSessionId, learningSessionStatus: learningSessions.learningSessionStatus, noteGenerationStatus: learningSessions.noteGenerationStatus,
+      demoScenario: learningSessions.demoScenario, learningSessionStartedAt: learningSessions.learningSessionStartedAt, learningSessionEndedAt: learningSessions.learningSessionEndedAt })
+      .from(learningSessions).where(eq(learningSessions.userId, who.userId)).orderBy(desc(learningSessions.learningSessionStartedAt));
+    const sessions = rows.map(r => ({ ...r, learningSessionStartedAt: r.learningSessionStartedAt.toISOString(), learningSessionEndedAt: r.learningSessionEndedAt?.toISOString() ?? null }));
+    const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`))
+      .orderBy(desc(learningSessionNotes.learningEndDateKst));
+    return { emailAddress: who.emailAddress, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
   });
 }
 
