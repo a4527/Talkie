@@ -4,6 +4,7 @@
 
 ## 2026-11-02
 
+- 전 후보 AI 모델 시험을 공개 전 선행 조건에서 해제하고, 현재 로컬 경로로 기능 개발을 이어가기로 했다. 공개 전 선택 경로의 데이터·비용·핵심 품질 검증과 명시적 선택은 유지하고 운영 중 실제 비용·품질·오류에 따라 조정한다([DEC-066](adr/066-DEFER-EXPANDED-AI-CANDIDATE-COMPARISON.md)).
 - Google Cloud TTS 시험에서 매번 OAuth 토큰을 `export`할 필요가 없도록, 로컬 ADC 로그인에서 단기 토큰을 자동으로 받고 유효 시간 안에서 재사용하도록 바꿨다. 프로젝트 ID 설정은 유지한다([실행법](../README.md#gemini-live-비공개-음성-시험)).
 - 비공개 `/voice` 분리형 시험에 STT·LLM·TTS별 선택 표시를 추가했다. 현재 STT는 Soniox, LLM은 Gemini 한 후보씩이며 TTS는 기존 Gemini와 Google Cloud Standard를 연결 전에 고를 수 있다. 선택은 연결 토큰에 고정되고 저장 학습·재생 근거 흐름은 공통이다. Soniox TTS는 WAV 비교만 수행했으며 앱 선택에는 포함하지 않았다. [작업 기록](worklogs/2026-11-02.md#분리형-공급자-선택-시험-연결)을 따른다.
 - Soniox·Google Cloud TTS의 같은 가상 영어·한국어 문장을 각각 생성해 WAV를 비교할 수 있게 했다. 단회 요청 시간과 파일 형식만 확인했고 음질·실제 청구액·최종 공급자 선택은 남는다([작업 기록](worklogs/2026-11-02.md#두-tts-후보의-동일-문장-생성-결과)).

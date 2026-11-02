@@ -34,7 +34,7 @@
 
 공급자의 실제 사용자 데이터 처리 조건과 비공개 합성·본인 음성 시험 예외, 총 예산·신규 호출 차단의 기준은 [PRD의 공급자 데이터 조건](../PRD.md#provider-data-policy)·[9.2절](../PRD.md#92-ai-제공맥락이용량-정책), 이유는 [ADR-025](../adr/025-EPHEMERAL-AUDIO-AND-PROVIDER-RETENTION.md)·[ADR-056](../adr/056-LOCAL-TEST-PROVIDER-TRAINING-EXCEPTION.md)를 따른다. 현재 무료 시험 보호는 운영 비용 차단 구현이 아니다.
 
-로컬 통합·후보 비교의 순서와 완료 판정은 [TASKS](../TASKS.md#선행-관계)를 따른다. 비교 후보·역할·제안된 시험 배분·미확인 조건은 [평가 계획](../proposals/AI-CANDIDATE-EVALUATION-PLAN.md)을 따른다. 최종 공급자·모델·연결 경로와 공개 배포는 아직 확정하지 않았다.
+로컬 통합과 공개 경로의 완료 판정은 [TASKS](../TASKS.md#선행-관계)를 따른다. 후보 확장 비교의 후순위와 선택 경로 검증은 [DEC-066](../adr/066-DEFER-EXPANDED-AI-CANDIDATE-COMPARISON.md), 과거 비교 후보·제안된 시험 배분은 [평가 계획](../proposals/AI-CANDIDATE-EVALUATION-PLAN.md)을 따른다. 최종 공급자·모델·연결 경로와 공개 배포는 아직 확정하지 않았다.
 
 실행은 [README](../../README.md#gemini-live-비공개-음성-시험), 가짜 연결/단위·합성 실제 연결 스모크의 조건과 한계는 [2026-10-27 worklog](../worklogs/2026-10-27.md)에 둔다. 독립 평가 하니스의 비용 장부·기록 호환성은 [하니스 README](../../harness/voice-eval/README.md#구조)를 따른다.
 
