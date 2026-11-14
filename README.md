@@ -14,9 +14,9 @@ npm ci
 npm run dev
 ```
 
-[http://127.0.0.1:3000](http://127.0.0.1:3000)에서 시나리오를 고르고 **대화 시작**을 누릅니다. 교정 시나리오는 답변 → 연습 표현 → 첫 재시도 실패 → 두 번째 성공 순서이며, 입력의 실제 영어 정확도를 판정하지 않습니다. 대화 종료 후 노트를 보고 `YYYY-MM-DD.md`로 다운로드할 수 있습니다. **데모 시나리오 확인**에서 다음 응답/노트 실패와 느린 응답을 시험합니다.
+[http://127.0.0.1:3000/try](http://127.0.0.1:3000/try)에서 시나리오를 고르고 **대화 시작**을 누릅니다. 교정 시나리오는 답변 → 연습 표현 → 첫 재시도 실패 → 두 번째 성공 순서이며, 입력의 실제 영어 정확도를 판정하지 않습니다. 대화 종료 후 노트를 보고 `YYYY-MM-DD.md`로 다운로드할 수 있습니다. **데모 시나리오 확인**에서 다음 응답/노트 실패와 느린 응답을 시험합니다.
 
-B-00은 가짜 AI·텍스트·브라우저 메모리만 사용합니다. 새로고침하면 기록이 사라지며, 실제 음성·AI·인증·영구 저장·날짜별 여러 세션 통합은 후속 작업입니다. API 키나 환경 변수는 필요하지 않습니다. 대화 입력은 외부 AI나 앱 서버로 보내지 않습니다. 화면의 최소 진단 정보도 최근 100개를 메모리에만 둡니다.
+B-00은 `/try`에서 가짜 AI·텍스트·브라우저 메모리만 사용합니다. 루트는 랜딩이며 로그인 앱은 `/home`·`/talk`로 이어집니다([화면 통합 기록](docs/worklogs/2026-11-02.md#로컬-앱-데모-통합)). 새로고침하면 기록이 사라지며, 실제 음성·AI·인증·영구 저장·날짜별 여러 세션 통합은 후속 작업입니다. API 키나 환경 변수는 필요하지 않습니다. 대화 입력은 외부 AI나 앱 서버로 보내지 않습니다. 화면의 최소 진단 정보도 최근 100개를 메모리에만 둡니다.
 
 ```sh
 npm test                 # 상태 전이·중복·재개·노트 근거
@@ -136,7 +136,7 @@ ORDER BY transcript_storage_created_at DESC NULLS LAST;
 
 `.env`는 로컬 전용이며 Git에서 제외합니다. 인증·저장 앱의 변수 이름과 안전한 예시는 [app/.env.example](app/.env.example)을 따르며 실제 값은 Git 제외한 `app/.env`에 둡니다. 루트 [`.env.example`](.env.example)은 기존 공통 예시입니다. 구현 과정에서 변수가 생기면 예시 파일에는 변수 이름과 안전한 예시값만 추가하고, 실제 값은 `.env`에 둡니다. 이미 Git에 올라간 비밀값은 `.gitignore`만으로 제거되지 않으므로 해당 값을 폐기·재발급하고 Git 기록도 별도로 처리해야 합니다.
 
-이 저장소의 커밋 전 검사 훅을 켭니다. [Gitleaks](https://github.com/gitleaks/gitleaks#installing)는 별도로 설치하거나 실행 파일을 `.tools/gitleaks`에 둡니다. Gitleaks가 없으면 커밋을 중단합니다. 현재 로컬 환경에는 공식 v8.30.1 배포 파일을 체크섬 검증 후 `.tools/gitleaks`에 설치했습니다.
+이 저장소의 훅은 Gitleaks 8.30.1의 `git` 명령을 사용합니다. [공식 릴리스](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1)에서 환경에 맞는 배포물과 체크섬을 받아 SHA-256을 확인한 뒤 실행 파일을 `.tools/gitleaks`에 둡니다. 같은 릴리스의 체크섬은 배포물 무결성 확인에 사용합니다. `.tools/`는 Git 추적에서 제외됩니다. Gitleaks가 없으면 커밋을 중단합니다. 다음 명령은 기존 pre-commit·pre-push 훅을 함께 켭니다.
 
 ```sh
 git config --local core.hooksPath .githooks
@@ -173,4 +173,4 @@ Google 무료 API는 제품 개선·학습과 사람 검토에 데이터를 사�
 
 `cd app`에서 `npm run tts:compare -- soniox`를 실행하면 기존 `SONIOX_API_KEY`로 영어·한국어의 짧은 가상 문장 두 개를 Soniox TTS에 보내고 `app/.local/tts-compare/`에 WAV 파일을 저장한다. 실제 API 사용량이 발생할 수 있다. 문장은 고정된 합성 자료이며 사용자 기록은 보내지 않는다.
 
-Google Cloud Text-to-Speech는 Gemini Developer API와 별도 서비스다. [Google Cloud 설정 안내](https://docs.cloud.google.com/text-to-speech/docs/get-started)에 따라 프로젝트에서 결제를 연결하고 Cloud Text-to-Speech API를 활성화한 뒤 [로컬 ADC 인증](https://docs.cloud.google.com/text-to-speech/docs/authentication)을 설정한다. 프로젝트 ID를 `app/.env`의 `GOOGLE_CLOUD_PROJECT`에 넣고 `gcloud auth application-default login`을 완료한 뒤 `npm run tts:compare -- google-cloud`를 실행한다. 스크립트도 단기 토큰을 ADC에서 자동 발급하며 과금 프로젝트를 `x-goog-user-project` 요청 헤더로 지정한다. `GOOGLE_API_KEY`는 이 명령에서 사용하지 않는다. 토큰·서비스 계정 파일을 Git이나 채팅에 올리지 않는다. WAV는 로컬 Git 제외 경로에 저장된다. 두 후보의 출력은 직접 듣고 영어 교정 발음·한국어 도움·속도·자연스러움을 비교한다. 이 명령은 `/voice`의 TTS 공급자를 바꾸지 않는다.
+Google Cloud Text-to-Speech는 Gemini Developer API와 별도 서비스다. [Google Cloud 설정 안내](https://docs.cloud.google.com/text-to-speech/docs/get-started)에 따라 프로젝트에서 결제를 연결하고 Cloud Text-to-Speech API를 활성화한 뒤 [로컬 ADC 인증](https://docs.cloud.google.com/text-to-speech/docs/authentication)을 설정한다. 프로젝트 ID를 `app/.env`의 `GOOGLE_CLOUD_PROJECT`에 넣고 `gcloud auth application-default login`을 완료한 뒤 `npm run tts:compare -- google-cloud`를 실행한다. 스크립트도 단기 토큰을 ADC에서 자동 발급하며 과금 프로젝트를 `x-goog-user-project` 요청 헤더로 지정한다. `GOOGLE_API_KEY`는 이 명령에서 사용하지 않는다. 토큰·서비스 계정 파일을 Git이나 채팅에 올리지 않는다. WAV는 로컬 Git 제외 경로에 저장된다. 두 후보의 출력은 직접 듣고 영어 교정 발음·한국어 도움·속도·자연스러움을 비교한다. 이 명령은 `/talk`에서 선택한 분리형 TTS 공급자를 바꾸지 않는다.

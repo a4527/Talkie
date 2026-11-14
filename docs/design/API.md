@@ -2,7 +2,7 @@
 
 미션 전환(승인·미구현): 기존 API는 현 구현 계약이다. 미션 생성/시작·구조화 진행·평가·연결 차감의 변경은 [미션 설계](MISSIONS.md)를 기준으로 후속 명세하며 현재 필드에 이미 존재한다고 간주하지 않는다.
 
-갱신일: 2026-11-02. 현재 로컬 합성 이메일·Google OIDC 로그인·저장 학습 API와 비공개 음성 API의 구현 설명이다. 운영 음성 API는 미구현이다. 로그인 조건은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다.
+갱신일: 2026-11-14. 현재 로컬 합성 이메일·Google OIDC 로그인·저장 학습 API와 비공개 음성 API의 구현 설명이다. 운영 음성 API는 미구현이다. 로그인 조건은 [PRD 8.1](../PRD.md#81-가입로그인과-로그인-유지)을 따른다.
 
 ## 공통 요청·응답
 
@@ -57,7 +57,7 @@
 | `save` | `learningSessionId`, `learningConnectionToken`, `saveSequenceNumber`, `conversationSnapshot` | `{confirmedSaveSequenceNumber}` |
 | `end` | `learningSessionId`, `learningConnectionToken` | `{learningSessionEndedAt}` |
 | `heartbeat`, `pause` | `learningSessionId`, `learningConnectionToken` | `{ok: true}` |
-| `note` | `learningSessionId` | `{ok: true}`. 본인 세션 방식에 맞는 시험용 근거 노트 정리이며 연결 토큰은 요구하지 않음 |
+| `note` | `learningSessionId` | `{ok: true}`. 텍스트 연습은 가짜 노트, 음성은 별도 AI 추출·근거 검증으로 정리. 연결 토큰은 요구하지 않음 |
 
 음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다.
 
@@ -82,4 +82,4 @@
 | 429 | `WAIT_30_SECONDS`, `VOICE_TEST_WAIT` |
 | 503 | `SERVICE_UNAVAILABLE`, `VOICE_KEY_REQUIRED`, `VOICE_TOKEN_UNAVAILABLE` |
 
-이 표는 주요 사례이며 전체 오류 목록의 복사본이 아니다. 런타임 입력 검증·응답 변환은 연결한 코드를 기준으로 대조한다. 운영 음성 API·재연결·연결 허용 시간 소진 계약과 Google 계정 연결 정책은 미정이다. 생성 내용과 실제 재생 범위를 구분하고, 취소 뒤 늦은 응답이 확인 기록을 바꾸지 않는 제약은 [음성](VOICE.md)·[학습 저장](LEARNING-PERSISTENCE.md) 설계에 둔다.
+이 표는 주요 사례이며 전체 오류 목록의 복사본이 아니다. 런타임 입력 검증·응답 변환은 연결한 코드를 기준으로 대조한다. 운영 음성 API·재연결·미션 연결 성립/횟수 차감 계약은 후속이며 [미션 설계](MISSIONS.md#연결과-횟수)를 따른다. Google 연결 정책은 DEC-067로 승인·로컬 구현됐고 실제 클라이언트 검증은 남는다. 생성 내용과 실제 재생 범위를 구분하고, 취소 뒤 늦은 응답이 확인 기록을 바꾸지 않는 제약은 [음성](VOICE.md)·[학습 저장](LEARNING-PERSISTENCE.md) 설계에 둔다.

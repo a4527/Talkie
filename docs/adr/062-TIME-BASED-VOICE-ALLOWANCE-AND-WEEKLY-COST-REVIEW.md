@@ -1,5 +1,7 @@
 # ADR-062 · DEC-062 · 연결 허용 시간과 주간 과금 대조
 
+현재 상태(2026-11-14 대조): **Partially Superseded**. DEC-064가 연결당 상한을, DEC-069가 시간 차감을 대체하며 주간 비용 대조·지출 보호는 유지. 목록은 [DECISIONS](../DECISIONS.md)를 따른다. 아래 원래 상태·이유는 당시 기록으로 보존한다.
+
 후속 상태: Partially Superseded (2026-11-03). [ADR-069](069-MISSION-CENTERED-LEARNING.md)가 관련 미션 진행·종료·이용량 범위를 대체한다. 아래는 결정 당시 근거이며 현행 정책은 PRD를 따른다.
 
 - 결정일: 2026-10-30
