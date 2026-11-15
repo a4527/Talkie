@@ -9,8 +9,9 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm"
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
-import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions } from "./db/records-schema";
-import { currentMission, findMissionDefinition, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
+import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "./db/records-schema";
+import { evaluateMission, type AreaScores, type EvaluationRun } from "../mission/evaluation";
+import { currentMission, findMissionDefinition, findMissionRubric, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
 import { DEFAULT_NO_PROGRESS_THRESHOLD, findCompletedRoute } from "../mission/realtime";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
@@ -255,6 +256,45 @@ export async function recordMissionEnd(tx: RecordsTransaction, row: LearningRow,
   const missionEndReason = finalRouteId ? "goal_completed"
     : mission.missionMode === "real" && noProgress && noProgress.count >= MISSION_NO_PROGRESS_THRESHOLD && noProgress.evidenceTurnIds.every(id => order.has(id)) ? "no_progress_failed" : fallback;
   await tx.update(learningSessionMissions).set({ missionEndReason, finalRouteId }).where(and(eq(learningSessionMissions.learningSessionId, row.learningSessionId), isNull(learningSessionMissions.missionEndReason)));
+  // The evaluation is owed only when the learner said something (DEC-087: no-utterance sessions skip it like the note).
+  const evaluationStatus = snapshot?.turns.some(t => t.role === "user") ? "pending" : "skipped";
+  await tx.insert(learningMissionResults).values({ learningSessionId: row.learningSessionId, userId: row.userId, evaluationStatus }).onConflictDoNothing();
+}
+/** The fixed mission when its evaluation is still owed and the source can still be read; otherwise undefined. */
+export async function pendingMissionEvaluation(tx: RecordsTransaction, row: LearningRow, now: Date) {
+  if (!row.learningSessionEndedAt || !row.transcriptDeleteDeadlineAt || row.transcriptDeleteDeadlineAt <= now) return;
+  const [result] = await tx.select().from(learningMissionResults).where(eq(learningMissionResults.learningSessionId, row.learningSessionId));
+  if (result?.evaluationStatus !== "pending") return;
+  const [mission] = await tx.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, row.learningSessionId));
+  return mission;
+}
+/** True while a mission evaluation is still owed; the source must not be deleted before it settles. */
+async function missionEvaluationPending(tx: RecordsTransaction, learningSessionId: string) {
+  const [result] = await tx.select({ status: learningMissionResults.evaluationStatus }).from(learningMissionResults).where(eq(learningMissionResults.learningSessionId, learningSessionId));
+  return result?.status === "pending";
+}
+/** Deletes the temporary source only when the note and any mission evaluation have both settled (DEC-087). */
+export async function deleteSettledSource(tx: RecordsTransaction, row: LearningRow) {
+  if (settled(row.noteGenerationStatus) && !await missionEvaluationPending(tx, row.learningSessionId)) await deleteTranscriptSource(row.learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
+}
+/** Reads confirmed text and calls the evaluator. No lock or transaction may be held by the caller. Null means retry later. */
+export async function evaluateMissionSession(row: LearningRow, mission: MissionRow, deps: NoteDeps = {}): Promise<EvaluationRun | null> {
+  const definition = findMissionDefinition(mission.missionId, mission.definitionVersion), rubric = findMissionRubric(mission.missionId, mission.rubricVersion);
+  if (!definition || !rubric) return null;
+  try {
+    const snapshot = await readConfirmed(row);
+    return await evaluateMission(snapshot, { definition, rubric, missionMode: mission.missionMode as MissionMode, languageLevel: mission.languageLevel as LanguageLevel,
+      missionEndReason: mission.missionEndReason, finalRouteId: mission.finalRouteId }, { generate: deps.evaluate ?? deps.generate ?? createGeminiExtractionGenerate(), signal: AbortSignal.timeout(160_000) });
+  } catch { return null; }
+}
+/** Stores a validated evaluation once. The details expire with the note; the aggregate stays (DEC-088). */
+export async function storeMissionEvaluation(tx: RecordsTransaction, row: LearningRow, run: EvaluationRun) {
+  if (!row.learningSessionEndedAt || !await missionEvaluationPending(tx, row.learningSessionId)) return;
+  const now = await dbNow(tx);
+  await tx.update(learningMissionResults).set({ evaluationStatus: "ready", areaScores: run.score.areas, totalEarnedHalf: run.score.totalEarnedHalf, totalMaxHalf: run.score.totalMaxHalf,
+    meetsThreshold: run.score.meetsThreshold, evaluatedAt: now }).where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
+  await tx.insert(learningMissionResultDetails).values({ learningSessionId: row.learningSessionId, userId: row.userId, judgements: run.judgements,
+    detailRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + NOTE_RETENTION_DAYS * DAY) }).onConflictDoNothing();
 }
 
 // Deliberately small synthetic summary; actual AI selection is still B-09/B-06 work.
@@ -264,7 +304,9 @@ function buildDemoNoteMarkdown(conversationSnapshot: ConversationSnapshot, learn
   const escaped = (text: string) => text.slice(0, 160).replace(/[&<>\\`*_[\]{}()#!|]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] ?? "\\" + c)).replace(/\r?\n/g, "\n> ");
   return `# ${formatKstDate(learningSessionEndedAt.toISOString())} 영어 학습 노트\n\n가짜 AI 저장 시험 · 실제 언어 평가 결과가 아닙니다.\n\n${conversationSnapshot.hasConversationGaps ? "일부 대화 기록이 누락됐습니다.\n\n" : ""}## 대화 근거 일부\n\n` + userTurns.slice(-3).map(t => `> ${escaped(t.text)}\n\n근거: ${t.turnId}`).join("\n\n") + "\n";
 }
-export type NoteDeps = { generate?: ExtractionGenerate };
+/** `evaluate` overrides the mission evaluation transport; both default to the note extraction model. */
+export type NoteDeps = { generate?: ExtractionGenerate; evaluate?: ExtractionGenerate };
+const NOTE_RETENTION_DAYS = 30;
 const settled = (status: string) => ["ready", "empty", "expired"].includes(status);
 /** True when a voice note still needs the model. The model call must happen outside any database transaction. */
 export function needsVoiceExtraction(row: LearningRow, now: Date) {
@@ -287,8 +329,11 @@ export async function extractVoiceNote(row: LearningRow, deps: NoteDeps = {}): P
 export async function finalizeLearningNote(tx: RecordsTransaction, row: LearningRow, extraction?: ExtractionRun | null) {
   if (!row.learningSessionEndedAt || !row.transcriptDeleteDeadlineAt) return;
   const now = await dbNow(tx);
+  // An evaluation not settled by the source deadline is unavailable (DEC-089): no score, no achievement.
+  if (row.transcriptDeleteDeadlineAt <= now) await tx.update(learningMissionResults).set({ evaluationStatus: "unavailable" })
+    .where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
   if (settled(row.noteGenerationStatus)) {
-    await deleteTranscriptSource(row.learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
+    await deleteSettledSource(tx, row);
     return;
   }
   if (row.transcriptDeleteDeadlineAt <= now) {
@@ -303,33 +348,37 @@ export async function finalizeLearningNote(tx: RecordsTransaction, row: Learning
     ? buildVoiceNoteMarkdown(conversationSnapshot, endedAt, extraction!.contextItems, { details: extraction!.detailItems, incomplete: extraction!.failedChunks > 0 || extraction!.omittedChunks > 0 || extraction!.droppedItems > 0 })
     : buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
   if (noteMarkdown) await tx.insert(learningSessionNotes).values({ learningSessionId: row.learningSessionId, userId: row.userId, learningEndDateKst: formatKstDate(endedAt), noteMarkdown,
-    noteRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + 30 * DAY) }).onConflictDoNothing();
+    noteRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + NOTE_RETENTION_DAYS * DAY) }).onConflictDoNothing();
   await tx.update(learningSessions).set({ noteGenerationStatus: noteMarkdown ? "ready" : "empty", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
   // Commit durable note first. The worker deletes the source in a subsequent transaction.
 }
 export async function completeLearningNote(loginSessionToken: string | undefined, learningSessionId: string, deps: NoteDeps = {}) {
-  // 1) Short transaction: settle what needs no model, or capture the row for extraction.
+  // 1) Short transaction: record the mission end, settle what needs no model, or capture what does.
   const pending = await withIdentity(loginSessionToken, async (tx, who) => {
-    const row = await requireOwnedLearningSession(tx, who, learningSessionId);
+    const row = await requireOwnedLearningSession(tx, who, learningSessionId), now = await dbNow(tx);
     await recordMissionEnd(tx, row, "user_ended");
-    if (needsVoiceExtraction(row, await dbNow(tx))) return row;
-    await finalizeLearningNote(tx, row);
-    return null;
+    const note = needsVoiceExtraction(row, now), mission = await pendingMissionEvaluation(tx, row, now);
+    if (!note && !mission) { await finalizeLearningNote(tx, row); return null; }
+    return { row, note, mission };
   });
   if (pending) {
-    // 2) Model call with no lock and no transaction held.
-    const extraction = await extractVoiceNote(pending, deps);
-    // 3) Short transaction: the row is locked again and its state re-read, so a concurrent finish or expiry wins.
+    // 2) Model calls with no lock and no transaction held; the note and the evaluation are requested together (DEC-087).
+    const [extraction, evaluation] = await Promise.all([
+      pending.note ? extractVoiceNote(pending.row, deps) : Promise.resolve(undefined),
+      pending.mission ? evaluateMissionSession(pending.row, pending.mission, deps) : Promise.resolve(undefined)]);
+    // 3) Short transaction: the row is locked again; results made from an older save are discarded.
     await withIdentity(loginSessionToken, async (tx, who) => {
       const row = await requireOwnedLearningSession(tx, who, learningSessionId);
-      if (!settled(row.noteGenerationStatus) && row.confirmedSaveSequenceNumber !== pending.confirmedSaveSequenceNumber) throw new AppError("NOTE_PENDING", 503);
-      await finalizeLearningNote(tx, row, extraction);
+      if (row.confirmedSaveSequenceNumber !== pending.row.confirmedSaveSequenceNumber) return;
+      if (evaluation) await storeMissionEvaluation(tx, row, evaluation);
+      await finalizeLearningNote(tx, row, pending.note ? extraction : undefined);
     });
-    if (!extraction) throw new AppError("NOTE_PENDING", 503);
   }
+  // 4) Whichever side settles last deletes the source, with both states re-read under the session lock.
   await withIdentity(loginSessionToken, async (tx, who) => {
     const row = await requireOwnedLearningSession(tx, who, learningSessionId);
-    if (settled(row.noteGenerationStatus)) await deleteTranscriptSource(learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
+    if (!settled(row.noteGenerationStatus) || await missionEvaluationPending(tx, row.learningSessionId)) throw new AppError("NOTE_PENDING", 503);
+    await deleteSettledSource(tx, row);
   });
 }
 export async function listLearningRecords(loginSessionToken: string | undefined): Promise<LearningRecordsResponse> {
@@ -338,10 +387,14 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
     const rows = await tx.select({ learningSessionId: learningSessions.learningSessionId, learningSessionStatus: learningSessions.learningSessionStatus, noteGenerationStatus: learningSessions.noteGenerationStatus,
       demoScenario: learningSessions.demoScenario, learningSessionStartedAt: learningSessions.learningSessionStartedAt, learningSessionEndedAt: learningSessions.learningSessionEndedAt,
       mission: { missionId: learningSessionMissions.missionId, definitionVersion: learningSessionMissions.definitionVersion, rubricVersion: learningSessionMissions.rubricVersion,
-        missionMode: learningSessionMissions.missionMode, languageLevel: learningSessionMissions.languageLevel, missionEndReason: learningSessionMissions.missionEndReason, finalRouteId: learningSessionMissions.finalRouteId } })
+        missionMode: learningSessionMissions.missionMode, languageLevel: learningSessionMissions.languageLevel, missionEndReason: learningSessionMissions.missionEndReason, finalRouteId: learningSessionMissions.finalRouteId },
+      missionResult: { evaluationStatus: learningMissionResults.evaluationStatus, areaScores: learningMissionResults.areaScores, totalEarnedHalf: learningMissionResults.totalEarnedHalf,
+        totalMaxHalf: learningMissionResults.totalMaxHalf, meetsThreshold: learningMissionResults.meetsThreshold } })
       .from(learningSessions).leftJoin(learningSessionMissions, and(eq(learningSessionMissions.learningSessionId, learningSessions.learningSessionId), eq(learningSessionMissions.userId, who.userId)))
+      .leftJoin(learningMissionResults, and(eq(learningMissionResults.learningSessionId, learningSessions.learningSessionId), eq(learningMissionResults.userId, who.userId)))
       .where(eq(learningSessions.userId, who.userId)).orderBy(desc(learningSessions.learningSessionStartedAt));
-    const sessions = rows.map(r => ({ ...r, learningSessionStartedAt: r.learningSessionStartedAt.toISOString(), learningSessionEndedAt: r.learningSessionEndedAt?.toISOString() ?? null }));
+    // Raw half-point values only; display strings and rounding are made on screen (DEC-080).
+    const sessions = rows.map(r => ({ ...r, missionResult: r.missionResult ? { ...r.missionResult, areaScores: r.missionResult.areaScores as AreaScores | null } : null, learningSessionStartedAt: r.learningSessionStartedAt.toISOString(), learningSessionEndedAt: r.learningSessionEndedAt?.toISOString() ?? null }));
     const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`))
       .orderBy(desc(learningSessionNotes.learningEndDateKst));
     return { emailAddress: who.emailAddress, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };

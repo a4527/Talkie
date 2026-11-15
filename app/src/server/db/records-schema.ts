@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, integer, uniqueIndex, index, check, foreignKey } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, uniqueIndex, index, check, foreignKey } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 export const users = pgTable("users", {
@@ -79,4 +79,29 @@ export const learningSessionMissions = pgTable("learning_session_missions", {
   check("learning_mission_versions", sql`${t.definitionVersion} >= 1 and ${t.rubricVersion} >= 1`),
   check("learning_mission_end_reason", sql`${t.missionEndReason} in ('goal_completed', 'no_progress_failed', 'user_ended', 'resume_expired')`),
   check("learning_mission_final_route", sql`${t.finalRouteId} is null or ${t.missionEndReason} is not null`),
+]);
+/**
+ * Mission result aggregate (DEC-088): kept until account deletion, with no learner utterance text.
+ * Versions, mode, level, end reason and final route stay on `learning_session_missions`. Scores are
+ * half-point integers; `area_scores` holds per-area earned/max for goal and the four language areas.
+ */
+export const learningMissionResults = pgTable("learning_mission_results", {
+  learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
+  evaluationStatus: text("evaluation_status").notNull(), areaScores: jsonb("area_scores"),
+  totalEarnedHalf: integer("total_earned_half"), totalMaxHalf: integer("total_max_half"), meetsThreshold: boolean("meets_threshold"), evaluatedAt: time("evaluated_at"),
+}, t => [
+  foreignKey({ name: "learning_mission_result_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
+  index("learning_mission_result_user").on(t.userId),
+  check("learning_mission_result_status", sql`${t.evaluationStatus} in ('pending', 'ready', 'skipped', 'unavailable')`),
+  check("learning_mission_result_scores", sql`(${t.evaluationStatus} = 'ready') = (${t.areaScores} is not null and ${t.totalEarnedHalf} is not null and ${t.totalMaxHalf} is not null and ${t.evaluatedAt} is not null)`),
+  check("learning_mission_result_range", sql`${t.totalEarnedHalf} is null or (${t.totalEarnedHalf} >= 0 and ${t.totalEarnedHalf} <= ${t.totalMaxHalf})`),
+  check("learning_mission_result_threshold", sql`${t.meetsThreshold} is null or (${t.evaluationStatus} = 'ready' and ${t.totalMaxHalf} > 0)`),
+]);
+/** Per-criterion verdicts, reasons and short verified quotes; expire with the note (DEC-088). */
+export const learningMissionResultDetails = pgTable("learning_mission_result_details", {
+  learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
+  judgements: jsonb("judgements").notNull(), detailRetentionExpiresAt: time("detail_retention_expires_at").notNull(),
+}, t => [
+  foreignKey({ name: "learning_mission_detail_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
+  index("learning_mission_detail_user_expiry").on(t.userId, t.detailRetentionExpiresAt),
 ]);

@@ -11,7 +11,8 @@ import { consumeLink, deleteAccount, dbNow, digest, inspectLink, logout, request
 import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
 import { completeGoogleAuth, unlinkGoogle, type GoogleOAuthState } from "../src/server/google-auth";
-import { googleIdentities, learningSessionMissions } from "../src/server/db/records-schema";
+import { googleIdentities, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "../src/server/db/records-schema";
+import { currentMission } from "../src/mission/definitions";
 import type { ExtractionGenerate } from "../src/voice/note-extraction";
 import { priorLearningWindow } from "../src/voice/prior-learning";
 import { boundRecords } from "../src/learning/buffer";
@@ -439,6 +440,83 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       const [expired] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, s.learningSessionId));
       assert.deepEqual([expired.missionEndReason, expired.finalRouteId], ["resume_expired", null]);
       assert.equal((await listLearningRecords(idle)).sessions[0].mission?.missionEndReason, "resume_expired");
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+  it("evaluates a mission with the note, keeps the source until both settle, and keeps only the aggregate after details expire", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    const { rubric } = currentMission("cafe-wrong-order")!;
+    const turns = [{ turnId: "a0", requestId: "a0", role: "assistant", text: "Hi, how can I help?" }, { turnId: "u1", requestId: "u1", role: "user", text: "I ordered a hot decaf latte but this is iced." },
+      { turnId: "a1", requestId: "u1", role: "assistant", text: "I can remake it in five minutes." }, { turnId: "u2", requestId: "u2", role: "user", text: "Yes, please remake it." },
+      { turnId: "a2", requestId: "u2", role: "assistant", text: "Okay, I'll remake it now." }];
+    const note: ExtractionGenerate = async () => JSON.stringify({ contextItems: [], detailItems: [{ kind: "summary", text: "Cafe complaint", evidence: [{ turnId: "u1", role: "user", text: "this is iced" }] }] });
+    const verdict = (id: string) => id === "caffeine_mismatch" ? { verdict: "unmet", evidence: [] } : id === "grammar_level_stability" ? { verdict: "partial", evidence: [{ turnId: "u1", text: "but this is iced" }] }
+      : { verdict: "met", evidence: [{ turnId: "u2", text: "please remake it" }] };
+    const evaluation: ExtractionGenerate = async () => JSON.stringify({ judgements: [...rubric.goalCriteria, ...rubric.languageCriteria].map(c => ({ criterionId: c.criterionId, ...verdict(c.criterionId), counterEvidence: [], reason: "합성 판정" })) });
+    const down: ExtractionGenerate = async () => { throw new Error("synthetic evaluation outage"); };
+    const ended = async (email: string, list = turns) => {
+      const raw = await login(email), s = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "B1" });
+      if (list.length) await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns: list });
+      await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+      return { raw, s };
+    };
+    const result = async (id: string) => (await databases().records.select().from(learningMissionResults).where(eq(learningMissionResults.learningSessionId, id)))[0];
+    const sourceRows = async (id: string) => (await databases().transcripts.select().from(transcriptSaves).where(eq(transcriptSaves.learningSessionId, id))).length;
+    try {
+      // The note settles but the evaluation fails: the source stays for the retry, and only the evaluation is requested again.
+      const a = await ended("eval@example.test");
+      await assert.rejects(completeLearningNote(a.raw, a.s.learningSessionId, { generate: note, evaluate: down }), /NOTE_PENDING/);
+      assert.equal((await result(a.s.learningSessionId)).evaluationStatus, "pending");
+      assert.ok(await sourceRows(a.s.learningSessionId) > 0, "Source waits for the pending evaluation");
+      let noteCalls = 0;
+      await completeLearningNote(a.raw, a.s.learningSessionId, { generate: async (...args) => { noteCalls++; return note(...args); }, evaluate: evaluation });
+      assert.equal(noteCalls, 0, "A settled note is not requested again");
+      const ready = await result(a.s.learningSessionId);
+      assert.equal(ready.evaluationStatus, "ready");
+      // Goal 60 - 5 (caffeine unmet) = 55; language 40 - 1.5 (stability partial) = 38.5; 93.5/100.
+      assert.deepEqual([ready.totalEarnedHalf, ready.totalMaxHalf, ready.meetsThreshold], [187, 200, true]);
+      assert.deepEqual((ready.areaScores as Record<string, unknown>).grammar, { earnedHalf: 17, maxHalf: 20 });
+      assert.equal(await sourceRows(a.s.learningSessionId), 0, "Source is deleted once both settled");
+      const [detail] = await databases().records.select().from(learningMissionResultDetails).where(eq(learningMissionResultDetails.learningSessionId, a.s.learningSessionId));
+      assert.equal((detail.judgements as unknown[]).length, 18);
+      const listed = (await listLearningRecords(a.raw)).sessions[0];
+      assert.deepEqual(listed.missionResult, { evaluationStatus: "ready", areaScores: ready.areaScores, totalEarnedHalf: 187, totalMaxHalf: 200, meetsThreshold: true });
+      assert.ok(!JSON.stringify(listed.missionResult).includes("remake it"), "The aggregate carries no learner text");
+      // Details expire with the note; the aggregate stays.
+      await databases().records.update(learningMissionResultDetails).set({ detailRetentionExpiresAt: new Date(Date.now() - 1000) }).where(eq(learningMissionResultDetails.learningSessionId, a.s.learningSessionId));
+      await maintenance({ generate: down });
+      assert.equal((await databases().records.select().from(learningMissionResultDetails).where(eq(learningMissionResultDetails.learningSessionId, a.s.learningSessionId))).length, 0);
+      assert.equal((await result(a.s.learningSessionId)).evaluationStatus, "ready");
+
+      // The background job evaluates too; a deadline passed before settling makes it unavailable and frees the source.
+      const b = await ended("late@example.test");
+      await databases().records.update(learningSessions).set({ learningConnectionExpiresAt: new Date(Date.now() - 1000) }).where(eq(learningSessions.learningSessionId, b.s.learningSessionId));
+      await databases().records.update(scheduledJobs).set({ scheduledRunAt: new Date(Date.now() - 1000) }).where(eq(scheduledJobs.targetLearningSessionId, b.s.learningSessionId));
+      await maintenance({ generate: note, evaluate: down });
+      assert.equal((await result(b.s.learningSessionId)).evaluationStatus, "pending");
+      assert.ok(await sourceRows(b.s.learningSessionId) > 0);
+      await databases().records.update(learningSessions).set({ transcriptDeleteDeadlineAt: new Date(Date.now() - 1000) }).where(eq(learningSessions.learningSessionId, b.s.learningSessionId));
+      await maintenance({ generate: note, evaluate: evaluation });
+      assert.equal((await result(b.s.learningSessionId)).evaluationStatus, "unavailable", "No evaluation after the deadline");
+      assert.equal(await sourceRows(b.s.learningSessionId), 0);
+      const c = await ended("bg@example.test");
+      await databases().records.update(learningSessions).set({ learningConnectionExpiresAt: new Date(Date.now() - 1000) }).where(eq(learningSessions.learningSessionId, c.s.learningSessionId));
+      await databases().records.update(scheduledJobs).set({ scheduledRunAt: new Date(Date.now() - 1000) }).where(eq(scheduledJobs.targetLearningSessionId, c.s.learningSessionId));
+      await maintenance({ generate: note, evaluate: evaluation });
+      assert.equal((await result(c.s.learningSessionId)).evaluationStatus, "ready");
+      await maintenance({ generate: note, evaluate: evaluation });
+      assert.equal(await sourceRows(c.s.learningSessionId), 0);
+
+      // No learner utterance: nothing to evaluate.
+      const d = await ended("silent@example.test", []);
+      await completeLearningNote(d.raw, d.s.learningSessionId, { generate: down, evaluate: down });
+      assert.equal((await result(d.s.learningSessionId)).evaluationStatus, "skipped");
+      await assert.rejects(databases().records.update(learningMissionResults).set({ evaluationStatus: "ready" }).where(eq(learningMissionResults.learningSessionId, d.s.learningSessionId)),
+        postgresFailure("23514", "learning_mission_result_scores"), "A ready result needs its scores");
     } finally {
       for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;

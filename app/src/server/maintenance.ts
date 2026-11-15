@@ -2,10 +2,9 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { DAY, dbNow } from "./auth";
 import { databases, type RecordsDatabase } from "./db";
-import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "./db/records-schema";
+import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, learningMissionResultDetails, users } from "./db/records-schema";
 import { transcriptSessionStates } from "./db/transcripts-schema";
-import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
-import { finalizeLearningNote, needsVoiceExtraction, extractVoiceNote, recordMissionEnd, type NoteDeps } from "./learning";
+import { deleteSettledSource, evaluateMissionSession, finalizeLearningNote, needsVoiceExtraction, extractVoiceNote, pendingMissionEvaluation, recordMissionEnd, storeMissionEvaluation, type NoteDeps } from "./learning";
 
 export async function maintenance(deps: NoteDeps = {}) {
   const db = databases();
@@ -14,7 +13,7 @@ export async function maintenance(deps: NoteDeps = {}) {
   const owners = await db.records.select({ id: users.userId }).from(users);
   for (const owner of owners) {
     try {
-      const voiceDue: string[] = [];
+      const voiceDue: { learningSessionId: string; note: boolean; mission?: Awaited<ReturnType<typeof pendingMissionEvaluation>> }[] = [];
       await db.records.transaction(async tx => {
         const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
         if (!user) return;
@@ -45,7 +44,8 @@ export async function maintenance(deps: NoteDeps = {}) {
           if (row.learningSessionEndedAt && (row.noteGenerationStatus !== "waiting_save" || (row.transcriptDeleteDeadlineAt && row.transcriptDeleteDeadlineAt <= now) ||
             (job && job.scheduledRunAt <= now && (!row.learningConnectionExpiresAt || row.learningConnectionExpiresAt <= now)))) {
             await recordMissionEnd(tx, row, "user_ended"); // No-op when already recorded (e.g. resume_expired above).
-            if (needsVoiceExtraction(row, now)) voiceDue.push(row.learningSessionId); // model call runs after this transaction, without locks
+            const note = needsVoiceExtraction(row, now), mission = await pendingMissionEvaluation(tx, row, now);
+            if (note || mission) voiceDue.push({ learningSessionId: row.learningSessionId, note, mission }); // model calls run after this transaction, without locks
             else {
               await finalizeLearningNote(tx, row);
               if (job) await tx.delete(scheduledJobs).where(eq(scheduledJobs.scheduledJobId, job.scheduledJobId));
@@ -55,18 +55,22 @@ export async function maintenance(deps: NoteDeps = {}) {
           processedSessionCount++;
         }
         await tx.delete(learningSessionNotes).where(and(eq(learningSessionNotes.userId, user.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} <= ${now}`));
+        // Criterion details expire with the note; the score aggregate stays until account deletion (DEC-088).
+        await tx.delete(learningMissionResultDetails).where(and(eq(learningMissionResultDetails.userId, user.userId), sql`${learningMissionResultDetails.detailRetentionExpiresAt} <= ${now}`));
         // A successful note commits before its source is deleted, in the next pass below.
       });
-      for (const learningSessionId of voiceDue) {
+      for (const { learningSessionId, note, mission } of voiceDue) {
         const [due] = await db.records.select().from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId));
         if (!due) continue;
-        const extraction = await extractVoiceNote(due, deps); // no lock, no transaction
+        // No lock, no transaction; the note and the evaluation are requested together (DEC-087).
+        const [extraction, evaluation] = await Promise.all([note ? extractVoiceNote(due, deps) : Promise.resolve(undefined), mission ? evaluateMissionSession(due, mission, deps) : Promise.resolve(undefined)]);
         await db.records.transaction(async tx => {
           const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
           const [row] = await tx.select().from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId)).for("update");
           if (!user || !row) return;
           if (row.confirmedSaveSequenceNumber !== due.confirmedSaveSequenceNumber) return;
-          await finalizeLearningNote(tx, row, extraction);
+          if (evaluation) await storeMissionEvaluation(tx, row, evaluation);
+          await finalizeLearningNote(tx, row, note ? extraction : undefined);
           const [fresh] = await tx.select({ status: learningSessions.noteGenerationStatus }).from(learningSessions).where(eq(learningSessions.learningSessionId, learningSessionId));
           // A failed extraction keeps its job so the next pass retries before the deadline.
           if (fresh && ["ready", "empty", "expired"].includes(fresh.status)) await tx.delete(scheduledJobs).where(and(eq(scheduledJobs.targetLearningSessionId, learningSessionId), eq(scheduledJobs.jobType, "note")));
@@ -76,7 +80,7 @@ export async function maintenance(deps: NoteDeps = {}) {
         const [user] = await tx.select().from(users).where(eq(users.userId, owner.id)).for("update");
         if (!user) return;
         const rows = await tx.select().from(learningSessions).where(and(eq(learningSessions.userId, user.userId), sql`${learningSessions.noteGenerationStatus} in ('ready','empty','expired')`)).for("update");
-        for (const row of rows) await deleteTranscriptSource(row.learningSessionId, transcriptDeletionReason(row.noteGenerationStatus));
+        for (const row of rows) await deleteSettledSource(tx, row); // Waits for a pending mission evaluation.
       });
     } catch { failures++; }
   }

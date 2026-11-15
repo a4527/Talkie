@@ -100,5 +100,8 @@ export interface LearningRecordsResponse {
   notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];
   sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null;
     /** Null for legacy free-conversation sessions. */
-    mission: { missionId: string; definitionVersion: number; rubricVersion: number; missionMode: string; languageLevel: string; missionEndReason: string | null; finalRouteId: string | null } | null }[];
+    mission: { missionId: string; definitionVersion: number; rubricVersion: number; missionMode: string; languageLevel: string; missionEndReason: string | null; finalRouteId: string | null } | null;
+    /** Null until a mission session ends. Scores are half-point integers; `meetsThreshold` is null when nothing was evaluable. */
+    missionResult: { evaluationStatus: string; areaScores: Record<"goal" | "grammar" | "vocabulary" | "organization" | "interaction", { earnedHalf: number; maxHalf: number }> | null;
+      totalEarnedHalf: number | null; totalMaxHalf: number | null; meetsThreshold: boolean | null } | null }[];
 }
