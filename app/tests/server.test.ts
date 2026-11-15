@@ -483,11 +483,19 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.equal(await sourceRows(a.s.learningSessionId), 0, "Source is deleted once both settled");
       const [detail] = await databases().records.select().from(learningMissionResultDetails).where(eq(learningMissionResultDetails.learningSessionId, a.s.learningSessionId));
       assert.equal((detail.judgements as unknown[]).length, 18);
-      const listed = (await listLearningRecords(a.raw)).sessions[0];
-      assert.deepEqual(listed.missionResult, { evaluationStatus: "ready", areaScores: ready.areaScores, totalEarnedHalf: 187, totalMaxHalf: 200, meetsThreshold: true });
-      assert.ok(!JSON.stringify(listed.missionResult).includes("remake it"), "The aggregate carries no learner text");
-      // Details expire with the note; the aggregate stays.
+      const records = await listLearningRecords(a.raw), listed = records.sessions[0];
+      const { criteria, ...aggregate } = listed.missionResult!;
+      assert.deepEqual(aggregate, { evaluationStatus: "ready", areaScores: ready.areaScores, totalEarnedHalf: 187, totalMaxHalf: 200, meetsThreshold: true });
+      assert.ok(!JSON.stringify(aggregate).includes("remake it"), "The aggregate carries no learner text");
+      // Details come with fixed labels/points in rubric order for the result screen.
+      assert.deepEqual(criteria?.map(c => c.criterionId), [...rubric.goalCriteria, ...rubric.languageCriteria].map(c => c.criterionId));
+      assert.deepEqual(criteria?.find(c => c.criterionId === "grammar_level_stability"), { criterionId: "grammar_level_stability", area: "grammar", label: "선택 수준에서의 안정성", points: 3,
+        verdict: "partial", reason: "합성 판정", evidence: ["but this is iced"], counterEvidence: [] });
+      assert.deepEqual(records.missions.map(m => m.missionId), ["cafe-wrong-order"]);
+      assert.ok(!JSON.stringify(records.missions).includes("different staff member"), "The catalog carries no partner knowledge");
+      // Details expire with the note (hidden at once, deleted by maintenance); the aggregate stays.
       await databases().records.update(learningMissionResultDetails).set({ detailRetentionExpiresAt: new Date(Date.now() - 1000) }).where(eq(learningMissionResultDetails.learningSessionId, a.s.learningSessionId));
+      assert.equal((await listLearningRecords(a.raw)).sessions[0].missionResult?.criteria, null, "Expired details are not listed");
       await maintenance({ generate: down });
       assert.equal((await databases().records.select().from(learningMissionResultDetails).where(eq(learningMissionResultDetails.learningSessionId, a.s.learningSessionId))).length, 0);
       assert.equal((await result(a.s.learningSessionId)).evaluationStatus, "ready");

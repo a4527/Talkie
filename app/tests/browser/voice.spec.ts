@@ -4,8 +4,8 @@ import { expect, test, type Page } from "@playwright/test";
 async function mockLearning(page: Page, notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[] = []) {
   const state = { snapshot: { turns: [], corrections: [], learningState: "conversation", hasConversationGaps: false } as any, sequence: 0, paused: false, ended: false, open: false };
   await page.route("**/api/learn", async route => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { emailAddress: "learner@example.test", notes: state.ended ? notes : [],
-      sessions: state.open || state.ended ? [{ learningSessionId: "synthetic-session", learningSessionStatus: state.ended ? "ended" : "interrupted", noteGenerationStatus: state.ended ? "ready" : "idle", demoScenario: "voice", learningSessionStartedAt: "2026-11-02T01:00:00.000Z", learningSessionEndedAt: null }] : [] } });
+    if (route.request().method() === "GET") return route.fulfill({ json: { emailAddress: "learner@example.test", missions: [], notes: state.ended ? notes : [],
+      sessions: state.open || state.ended ? [{ learningSessionId: "synthetic-session", learningSessionStatus: state.ended ? "ended" : "interrupted", noteGenerationStatus: state.ended ? "ready" : "idle", demoScenario: "voice", learningSessionStartedAt: "2026-11-02T01:00:00.000Z", learningSessionEndedAt: null, mission: null, missionResult: null }] : [] } });
     const data = route.request().postDataJSON();
     if (data.action === "start") { state.open = true; return route.fulfill({ json: { learningSessionId: "synthetic-session", learningConnectionToken: "synthetic-connection", conversationSnapshot: state.snapshot, confirmedSaveSequenceNumber: state.sequence } }); }
     if (data.action === "save") { state.snapshot = data.conversationSnapshot; state.sequence = data.saveSequenceNumber; }
@@ -14,6 +14,12 @@ async function mockLearning(page: Page, notes: { learningSessionId: string; lear
     await route.fulfill({ json: { ok: true } });
   });
   return state;
+}
+/** Free voice conversation; the mission option is the default choice on /talk. */
+async function openFreeVoice(page: Page) {
+  await page.goto("/talk");
+  const free = page.getByRole("radio", { name: /자유 음성 대화/ });
+  if (await free.isEnabled()) await free.click();
 }
 async function fakeMicrophone(page: Page) {
   await page.addInitScript(() => {
@@ -27,7 +33,7 @@ async function fakeMicrophone(page: Page) {
 
 test("split voice choices fit desktop and mobile before connection", async ({ page }) => {
   await mockLearning(page);
-  await page.goto("/talk");
+  await openFreeVoice(page);
   await page.getByLabel("음성 경로").selectOption("cascade");
   await expect(page.getByRole("combobox", { name: "STT" })).toHaveValue("soniox");
   await expect(page.getByRole("combobox", { name: "LLM" })).toHaveValue("gemini-flash-lite");
@@ -45,7 +51,7 @@ test("split voice sends the chosen TTS when requesting a connection", async ({ p
   });
   await mockLearning(page); await fakeMicrophone(page);
   await page.routeWebSocket(/stt-rt\.soniox\.com/, () => {});
-  await page.goto("/talk");
+  await openFreeVoice(page);
   await page.getByRole("combobox", { name: "음성 경로" }).selectOption("cascade");
   await page.getByRole("combobox", { name: "TTS" }).selectOption("google-cloud-standard");
   await page.getByRole("checkbox").check();
@@ -74,7 +80,7 @@ test("voice requires acknowledgement, shows the live transcript and releases the
       }
     });
   });
-  await page.goto("/talk");
+  await openFreeVoice(page);
   const start = page.getByRole("button", { name: "대화 시작" });
   await expect(start).toBeDisabled(); expect(issued).toBe(0);
   await page.getByRole("checkbox").check(); await start.click();
@@ -96,7 +102,7 @@ test("microphone denial never provisions a provider credential", async ({ page }
     Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: async () => { throw new DOMException("denied", "NotAllowedError"); } });
   });
   await mockLearning(page);
-  await page.goto("/talk"); await page.getByRole("checkbox").check();
+  await openFreeVoice(page); await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "대화 시작" }).click();
   await expect(page.getByRole("status").filter({ hasText: "마이크 권한" })).toBeVisible();
   await expect(page.getByRole("button", { name: "대화 시작" })).toBeEnabled();
@@ -133,7 +139,7 @@ test("stored voice resumes confirmed correction state and finishes with the feed
       if (data.toolResponse) socket.send(JSON.stringify({ serverContent: { outputTranscription: { text: index === 1 ? "Try: I went yesterday." : "Good. What happened next?" }, modelTurn: { parts: [{ inlineData: { mimeType: "audio/pcm;rate=24000", data: "AAA=" } }] }, turnComplete: true } }));
     });
   });
-  await page.goto("/talk"); await page.getByRole("checkbox").check();
+  await openFreeVoice(page); await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "대화 시작" }).click();
   await expect(page.getByRole("heading", { name: "다시 말해 보기" })).toBeVisible();
   await page.getByRole("button", { name: "잠시 멈추기", exact: true }).click();

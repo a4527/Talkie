@@ -12,6 +12,7 @@ import type { VoicePort } from "../voice/port";
 import { VoiceLearningRecords } from "../voice/learning";
 import type { ConversationSnapshot } from "../learning/types";
 import { updateVoiceTranscriptTurns, type VoiceTranscriptTurn } from "../voice/transcript";
+import type { MissionStartRequest, PublicMission } from "../mission/definitions";
 
 export type VoiceRoute = "gemini-live" | "cascade";
 export type VoicePhase = "idle" | "connecting" | "live" | "saving";
@@ -38,6 +39,7 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
   const [transcript, setTranscript] = useState<VoiceTranscriptTurn[]>([]);
   const [snapshot, setSnapshot] = useState<ConversationSnapshot>();
   const [deadline, setDeadline] = useState<number>();
+  const [mission, setMission] = useState<PublicMission>();
   const runtime = useRef<VoiceRuntime | undefined>(undefined);
   const persistence = useRef<Persistence | undefined>(undefined);
   const ended = useRef(onEnded);
@@ -96,9 +98,9 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
     };
   }, []);
 
-  async function start(route: VoiceRoute, cascadeSelection: CascadeSelection) {
+  async function start(route: VoiceRoute, cascadeSelection: CascadeSelection, missionRequest?: MissionStartRequest) {
     if (runtime.current || persistence.current) return;
-    setTranscript([]); setSnapshot(undefined); setSaveMessage("");
+    setTranscript([]); setSnapshot(undefined); setSaveMessage(""); setMission(undefined);
     setPhase("connecting"); setStatusMessage("마이크와 음성 연결을 준비하고 있어요.");
     const audio = new BrowserAudio(), abort = new AbortController();
     const current: VoiceRuntime = { audio, abort, port: { connect: async () => {}, sendAudio: () => {}, close: () => {} } };
@@ -106,11 +108,12 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
     try {
       await audio.open((pcm, rate) => current.port.sendAudio(pcm, rate));
       if (runtime.current !== current) return;
-      const session: StoredVoiceSession = await requestLearningAction({ action: "start", scenario: "voice" });
+      const session: StoredVoiceSession = await requestLearningAction(missionRequest ? { action: "start", mission: missionRequest } : { action: "start", scenario: "voice" });
       if (runtime.current !== current) {
         await requestLearningAction({ action: "pause", learningSessionId: session.learningSessionId, learningConnectionToken: session.learningConnectionToken }); return;
       }
       const mission = session.mission ?? undefined;
+      setMission(mission);
       const value: Persistence = { store: new VoiceLearningStore(session), busy: false,
         records: new VoiceLearningRecords(session.conversationSnapshot, mission ? { missionMode: mission.missionMode, routeIds: mission.routeIds } : undefined) };
       current.persistence = value; persistence.current = value;
@@ -161,8 +164,8 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
   }
 
   return {
-    phase, statusMessage, saveMessage, transcript, snapshot, deadline,
-    start: (route: VoiceRoute, selection: CascadeSelection) => void start(route, selection),
+    phase, statusMessage, saveMessage, transcript, snapshot, deadline, mission,
+    start: (route: VoiceRoute, selection: CascadeSelection, missionRequest?: MissionStartRequest) => void start(route, selection, missionRequest),
     pause: () => { stop("pause"); setStatusMessage("대화를 잠시 멈췄어요. 저장된 대화부터 이어서 할 수 있어요."); },
     end: () => { stop("end"); setStatusMessage("대화를 마치고 노트를 정리하고 있어요."); },
   };

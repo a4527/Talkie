@@ -3,12 +3,9 @@
 // Partner knowledge and rubric details are for the server and evaluation prompts only;
 // browsers receive `toPublicMission` output.
 
-export const MISSION_MODES = ["practice", "real"] as const;
-export const LANGUAGE_LEVELS = ["A1", "A2", "B1", "B2", "C"] as const;
-export const LANGUAGE_AREAS = ["grammar", "vocabulary", "organization", "interaction"] as const;
-export type MissionMode = typeof MISSION_MODES[number];
-export type LanguageLevel = typeof LANGUAGE_LEVELS[number];
-export type LanguageArea = typeof LANGUAGE_AREAS[number];
+import type { MissionCatalogEntry, MissionCriterionResult } from "../learning/types";
+import { GOAL_TOTAL_POINTS, LANGUAGE_AREA_POINTS, LANGUAGE_AREAS, LANGUAGE_LEVELS, MISSION_MODES, type LanguageArea, type LanguageLevel, type MissionMode } from "./constants";
+export { GOAL_TOTAL_POINTS, LANGUAGE_AREA_POINTS, LANGUAGE_AREAS, LANGUAGE_LEVELS, LANGUAGE_TOTAL_POINTS, MISSION_MODES, type LanguageArea, type LanguageLevel, type MissionMode } from "./constants";
 
 export interface MissionRoute { routeId: string; label: string; fixedConditions: string; completion: string }
 export interface MissionDefinition {
@@ -37,9 +34,6 @@ export interface PublicMission extends MissionStartRequest {
   routeIds: readonly string[];
 }
 
-export const GOAL_TOTAL_POINTS = 60;
-export const LANGUAGE_TOTAL_POINTS = 40;
-export const LANGUAGE_AREA_POINTS = 10;
 
 // Shared by every mission (PRD 4.5.2, DEC-079). Each area has one 4-point and two 3-point criteria.
 const LANGUAGE_CRITERIA_V1: readonly LanguageCriterion[] = [
@@ -170,3 +164,27 @@ export function toPublicMission(definition: MissionDefinition, rubricVersion: nu
     missionMode: fixed.missionMode, languageLevel: fixed.languageLevel, ...definition.publicView, goals: [...definition.publicView.goals],
     routeIds: definition.routes.map(r => r.routeId) };
 }
+
+/** Pre-start view of each startable mission: public situation, roles, goals and route labels only. */
+export function listMissionCatalog(): MissionCatalogEntry[] {
+  return listStartableMissions().flatMap(id => {
+    const mission = currentMission(id);
+    return mission ? [{ missionId: id, ...mission.definition.publicView, goals: [...mission.definition.publicView.goals],
+      routes: mission.definition.routes.map(r => ({ routeId: r.routeId, label: r.label })) }] : [];
+  });
+}
+
+/** Attaches fixed labels/points to stored judgements, in rubric order; unknown IDs are dropped. */
+export function describeJudgements(missionId: string, rubricVersion: number, judgements: readonly StoredJudgement[]): MissionCriterionResult[] {
+  const rubric = findMissionRubric(missionId, rubricVersion);
+  if (!rubric) return [];
+  const byId = new Map(judgements.map(j => [j.criterionId, j]));
+  const criteria = [...rubric.goalCriteria.map(c => ({ ...c, area: "goal" as const })), ...rubric.languageCriteria];
+  return criteria.flatMap(c => {
+    const j = byId.get(c.criterionId);
+    return j ? [{ criterionId: c.criterionId, area: c.area, label: c.label, points: c.points, verdict: j.verdict, reason: j.reason,
+      evidence: j.evidence.map(e => e.text), counterEvidence: j.counterEvidence.map(e => e.text) }] : [];
+  });
+}
+type StoredJudgement = { criterionId: string; verdict: MissionCriterionResult["verdict"]; reason: string; evidence: { text: string }[]; counterEvidence: { text: string }[] };
+

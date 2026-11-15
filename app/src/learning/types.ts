@@ -1,4 +1,5 @@
 import type { MissionProgress } from "../mission/progress";
+import type { ScoreArea } from "../mission/constants";
 
 export type LearningState = "conversation" | "retry";
 export type LearningPhase = "ready" | "waiting" | LearningState | "paused" | "ended";
@@ -95,13 +96,20 @@ export type ConversationSnapshot = Pick<LearningSessionState, "turns" | "correct
   missionProgress?: MissionProgress };
 
 // Browser-safe response fields; no credentials, database rows or server imports.
+export interface MissionCatalogEntry { missionId: string; title: string; situation: string; learnerRole: string; partnerRole: string; goals: string[]; routes: { routeId: string; label: string }[] }
+/** One rubric criterion with its stored verdict; labels/points come from the fixed rubric version. */
+export interface MissionCriterionResult { criterionId: string; area: ScoreArea; label: string; points: number; verdict: "met" | "partial" | "unmet" | "undeterminable"; reason: string; evidence: string[]; counterEvidence: string[] }
 export interface LearningRecordsResponse {
   emailAddress: string;
+  /** Startable missions for the selection screen (no partner knowledge or rubric evidence). */
+  missions: MissionCatalogEntry[];
   notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];
   sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null;
     /** Null for legacy free-conversation sessions. */
     mission: { missionId: string; definitionVersion: number; rubricVersion: number; missionMode: string; languageLevel: string; missionEndReason: string | null; finalRouteId: string | null } | null;
     /** Null until a mission session ends. Scores are half-point integers; `meetsThreshold` is null when nothing was evaluable. */
     missionResult: { evaluationStatus: string; areaScores: Record<"goal" | "grammar" | "vocabulary" | "organization" | "interaction", { earnedHalf: number; maxHalf: number }> | null;
-      totalEarnedHalf: number | null; totalMaxHalf: number | null; meetsThreshold: boolean | null } | null }[];
+      totalEarnedHalf: number | null; totalMaxHalf: number | null; meetsThreshold: boolean | null;
+      /** Per-criterion verdicts while the detail row is kept (expires with the note); null otherwise. */
+      criteria: MissionCriterionResult[] | null } | null }[];
 }

@@ -12,8 +12,12 @@ import { LearningSession } from "../../learning/session";
 import type { ConversationSnapshot } from "../../learning/types";
 import { cascadeLlmChoices, cascadeSttChoices, cascadeTtsChoices, defaultCascadeSelection, type CascadeSelection } from "../../voice/cascade/selection";
 import type { VoiceTranscriptTurn } from "../../voice/transcript";
+import { LANGUAGE_LEVELS, type LanguageLevel, type MissionMode } from "../../mission/constants";
+import { LEVEL_GUIDE, MODE_GUIDE } from "../../mission/display";
+import type { PublicMission } from "../../mission/definitions";
+import { missionSummaryLabel } from "../../components/mission-result";
 
-type Mode = "voice" | "text";
+type Mode = "mission" | "voice" | "text";
 type View = { kind: "setup" } | { kind: "text"; runtime: LearningRuntime } | { kind: "feedback"; learningSessionId: string };
 
 function Countdown({ deadline }: { deadline: number }) {
@@ -46,9 +50,23 @@ function ExpressionCard({ snapshot }: { snapshot?: ConversationSnapshot }) {
   </section>;
 }
 
+function MissionCard({ mission }: { mission: PublicMission }) {
+  return <section className="card mission-brief" aria-label="미션 정보">
+    <span className="eyebrow">MISSION · {MODE_GUIDE[mission.missionMode].label} · {LEVEL_GUIDE[mission.languageLevel].label}</span>
+    <h2>{mission.title}</h2>
+    <p>{mission.situation}</p>
+    <p className="small-label">목표</p>
+    <ul className="goal-list">{mission.goals.map(goal => <li key={goal}>{goal}</li>)}</ul>
+    <p className="hint">나: {mission.learnerRole} · 상대: {mission.partnerRole}</p>
+  </section>;
+}
+
 export default function Talk() {
   const [records, reload] = useRecords();
-  const [mode, setMode] = useState<Mode>("voice");
+  const [mode, setMode] = useState<Mode>("mission");
+  const [missionId, setMissionId] = useState<string>();
+  const [missionMode, setMissionMode] = useState<MissionMode>("practice");
+  const [languageLevel, setLanguageLevel] = useState<LanguageLevel>("B1");
   const [route, setRoute] = useState<VoiceRoute>("gemini-live");
   const [cascadeSelection, setCascadeSelection] = useState<CascadeSelection>(defaultCascadeSelection);
   const [accepted, setAccepted] = useState(false);
@@ -61,8 +79,11 @@ export default function Talk() {
 
   const value = records.status === "ready" ? records.value : undefined;
   const open = value?.sessions.find(s => s.learningSessionStatus === "active" || s.learningSessionStatus === "interrupted");
-  const lockedMode: Mode | undefined = open ? (open.demoScenario === "voice" ? "voice" : "text") : undefined;
+  const lockedMode: Mode | undefined = open ? (open.mission ? "mission" : open.demoScenario === "voice" ? "voice" : "text") : undefined;
   const effectiveMode = lockedMode ?? mode;
+  const catalog = value?.missions ?? [];
+  const chosenMission = catalog.find(m => m.missionId === (open?.mission?.missionId ?? missionId)) ?? catalog[0];
+  const usesVoice = effectiveMode !== "text";
 
   useEffect(() => { if (voice.phase === "idle") void reload(); }, [voice.phase, reload]);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [voice.transcript]);
@@ -81,7 +102,13 @@ export default function Talk() {
   function start() {
     setStatusMessage("");
     if (effectiveMode === "text") void startText();
-    else voice.start(route, cascadeSelection);
+    else if (effectiveMode === "voice") voice.start(route, cascadeSelection);
+    else if (chosenMission) {
+      // A resumed mission keeps its stored mode and level; the server ignores new values anyway.
+      const fixed = open?.mission;
+      voice.start(route, cascadeSelection, { missionId: chosenMission.missionId,
+        missionMode: (fixed?.missionMode ?? missionMode) as MissionMode, languageLevel: (fixed?.languageLevel ?? languageLevel) as LanguageLevel });
+    }
   }
   function again() { setView({ kind: "setup" }); void reload(); }
 
@@ -95,7 +122,7 @@ export default function Talk() {
       : live ? <div className="workspace">
         <section className="chat-panel" aria-label="음성 대화">
           <header className="panel-header">
-            <div><span className="eyebrow">TODAY’S CONVERSATION</span><h2>오늘의 영어 대화</h2></div>
+            <div><span className="eyebrow">{voice.mission ? "MISSION" : "TODAY’S CONVERSATION"}</span><h2>{voice.mission?.title ?? "오늘의 영어 대화"}</h2></div>
             <div className="live-meta">
               {voice.deadline && voice.phase === "live" && <Countdown deadline={voice.deadline} />}
               <span className={`status ${voice.phase === "live" ? "live" : "muted"}`}><span aria-hidden="true" />{voice.phase === "live" ? "대화 중" : voice.phase === "connecting" ? "연결 중" : "저장 중"}</span>
@@ -119,20 +146,51 @@ export default function Talk() {
           </div>
         </section>
         <aside className="side-panel">
-          <ExpressionCard snapshot={voice.snapshot} />
+          {voice.mission && <MissionCard mission={voice.mission} />}
+          {voice.mission?.missionMode !== "real" && <ExpressionCard snapshot={voice.snapshot} />}
           <p className="memory-note">원본 음성은 저장하지 않아요. 확인된 전사문과 교정만 계정에 저장되고, 화면을 벗어나면 대화를 잠시 멈춰요.</p>
         </aside>
       </div>
       : <section className="talk-setup">
-        <div className="page-title"><span className="eyebrow">START A CONVERSATION</span><h1>{open ? "멈춘 대화를 이어가요" : "어떻게 이야기할까요?"}<span>.</span></h1>
-          {open && <p className="muted-text">{modeLabel(open.demoScenario)}이 진행 중이에요. 저장된 마지막 대화부터 이어집니다. 다른 방식은 이 대화를 마친 뒤 시작할 수 있어요.</p>}</div>
-        <div className="mode-grid" role="radiogroup" aria-label="대화 방식">
-          {([["voice", "음성 대화", "AI 튜터와 목소리로 이야기해요. 이어폰을 권장해요.", "🎙"], ["text", "텍스트 연습", "가짜 튜터와 글로 흐름을 연습해요. API 키 없이 동작해요.", "✎"]] as const).map(([key, title, body, icon]) =>
+        <div className="page-title"><span className="eyebrow">START A CONVERSATION</span><h1>{open ? (open.mission ? "멈춘 미션을 이어가요" : "멈춘 대화를 이어가요") : "어떻게 이야기할까요?"}<span>.</span></h1>
+          {open && <p className="muted-text">{open.mission ? "미션" : modeLabel(open.demoScenario)}이 진행 중이에요. 저장된 마지막 대화부터 이어집니다. 다른 방식은 이 대화를 마친 뒤 시작할 수 있어요.</p>}</div>
+        <div className="mode-grid three" role="radiogroup" aria-label="대화 방식">
+          {([["mission", "카페 미션", "상황 속 역할을 맡아 목표를 해결하고 점수를 받아요.", "☕"], ["voice", "자유 음성 대화", "AI 튜터와 주제 없이 목소리로 이야기해요.", "🎙"], ["text", "텍스트 연습", "가짜 튜터와 글로 흐름을 연습해요. API 키 없이 동작해요.", "✎"]] as const).map(([key, title, body, icon]) =>
             <button key={key} role="radio" aria-checked={effectiveMode === key} className={`card mode-card ${effectiveMode === key ? "selected" : ""}`} disabled={Boolean(lockedMode && lockedMode !== key)} onClick={() => setMode(key)}>
               <span className="mode-icon" aria-hidden="true">{icon}</span><strong>{title}</strong><span>{body}</span>
             </button>)}
         </div>
-        {effectiveMode === "voice" && <div className="card voice-options">
+        {effectiveMode === "mission" && (chosenMission ? <div className="card mission-setup">
+          {catalog.length > 1 && !open && <label className="option-row">미션 <select value={chosenMission.missionId} onChange={event => setMissionId(event.target.value)}>
+            {catalog.map(m => <option key={m.missionId} value={m.missionId}>{m.title}</option>)}
+          </select></label>}
+          <div><span className="eyebrow">MISSION</span><h2>{chosenMission.title}</h2><p>{chosenMission.situation}</p></div>
+          <dl className="mission-facts">
+            <div><dt>나의 역할</dt><dd>{chosenMission.learnerRole}</dd></div>
+            <div><dt>상대</dt><dd>{chosenMission.partnerRole}</dd></div>
+            <div><dt>목표</dt><dd><ul className="goal-list">{chosenMission.goals.map(goal => <li key={goal}>{goal}</li>)}</ul></dd></div>
+            <div><dt>이용량</dt><dd>로컬 비공개 시험이라 미션 횟수를 차감하지 않아요. 음성 연결은 한 번에 최대 3분이며 이어서 할 수 있어요.</dd></div>
+          </dl>
+          {open?.mission ? <p className="notice-line">{missionSummaryLabel(open.mission)}로 시작한 미션이에요. 모드와 수준은 바꿀 수 없고, 다른 선택은 새 미션에서 할 수 있어요.</p> : <>
+            <fieldset className="choice-group">
+              <legend>모드</legend>
+              <div className="choice-row" role="radiogroup" aria-label="미션 모드">
+                {(["practice", "real"] as const).map(key => <button key={key} role="radio" aria-checked={missionMode === key} className={`choice ${missionMode === key ? "selected" : ""}`} onClick={() => setMissionMode(key)}>
+                  {MODE_GUIDE[key].label}{key === "practice" && <span className="choice-tag">기본</span>}</button>)}
+              </div>
+              <p className="hint">{MODE_GUIDE[missionMode].summary}</p>
+            </fieldset>
+            <fieldset className="choice-group">
+              <legend>언어 수준</legend>
+              <div className="choice-row" role="radiogroup" aria-label="언어 수준">
+                {LANGUAGE_LEVELS.map(level => <button key={level} role="radio" aria-checked={languageLevel === level} className={`choice ${languageLevel === level ? "selected" : ""}`} onClick={() => setLanguageLevel(level)}>{LEVEL_GUIDE[level].label}</button>)}
+              </div>
+              <p className="hint">{LEVEL_GUIDE[languageLevel].summary} 상대의 말하기 수준과 평가 기대치가 이 선택을 따라요. 공인 수준 판정은 아니에요.</p>
+            </fieldset>
+            <p className="hint">평가 기준은 시작할 때 고정돼요. 결과는 미션 목표 60점과 회화 40점으로 나눠 보여 드려요.</p>
+          </>}
+        </div> : records.status === "ready" && <div className="card empty-card"><p>지금 시작할 수 있는 미션이 없어요.</p></div>)}
+        {usesVoice && <div className="card voice-options">
           <div className="option-row">
             <label>음성 경로 <select value={route} onChange={event => setRoute(event.target.value as VoiceRoute)}>
               <option value="gemini-live">Gemini Live</option><option value="cascade">분리형 음성</option>
@@ -157,7 +215,7 @@ export default function Talk() {
           </div>
         </div>}
         <div className="start-row">
-          <button className="primary start" disabled={busy || records.status !== "ready" || (effectiveMode === "voice" && !accepted)} onClick={start}>{open ? "이어서 하기" : "대화 시작"} <span aria-hidden="true">↗</span></button>
+          <button className="primary start" disabled={busy || records.status !== "ready" || (usesVoice && !accepted) || (effectiveMode === "mission" && !chosenMission)} onClick={start}>{open ? "이어서 하기" : effectiveMode === "mission" ? "미션 시작" : "대화 시작"} <span aria-hidden="true">↗</span></button>
           <Link className="text-link" href="/home">홈으로</Link>
         </div>
         <p role="status" className="form-status">{statusMessage || voice.statusMessage}</p>

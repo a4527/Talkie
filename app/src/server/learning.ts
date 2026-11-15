@@ -11,7 +11,7 @@ import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
 import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "./db/records-schema";
 import { evaluateMission, type AreaScores, type EvaluationRun } from "../mission/evaluation";
-import { currentMission, findMissionDefinition, findMissionRubric, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
+import { currentMission, describeJudgements, listMissionCatalog, findMissionDefinition, findMissionRubric, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
 import { DEFAULT_NO_PROGRESS_THRESHOLD, findCompletedRoute } from "../mission/realtime";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
@@ -393,11 +393,20 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
       .from(learningSessions).leftJoin(learningSessionMissions, and(eq(learningSessionMissions.learningSessionId, learningSessions.learningSessionId), eq(learningSessionMissions.userId, who.userId)))
       .leftJoin(learningMissionResults, and(eq(learningMissionResults.learningSessionId, learningSessions.learningSessionId), eq(learningMissionResults.userId, who.userId)))
       .where(eq(learningSessions.userId, who.userId)).orderBy(desc(learningSessions.learningSessionStartedAt));
+    // Expired detail rows are not shown even before the maintenance job deletes them.
+    const details = await tx.select({ learningSessionId: learningMissionResultDetails.learningSessionId, judgements: learningMissionResultDetails.judgements }).from(learningMissionResultDetails)
+      .where(and(eq(learningMissionResultDetails.userId, who.userId), sql`${learningMissionResultDetails.detailRetentionExpiresAt} > ${now}`));
+    const judgementsBySession = new Map(details.map(d => [d.learningSessionId, d.judgements as Parameters<typeof describeJudgements>[2]]));
     // Raw half-point values only; display strings and rounding are made on screen (DEC-080).
-    const sessions = rows.map(r => ({ ...r, missionResult: r.missionResult ? { ...r.missionResult, areaScores: r.missionResult.areaScores as AreaScores | null } : null, learningSessionStartedAt: r.learningSessionStartedAt.toISOString(), learningSessionEndedAt: r.learningSessionEndedAt?.toISOString() ?? null }));
+    const sessions = rows.map(r => {
+      const judgements = r.mission && judgementsBySession.get(r.learningSessionId);
+      return { ...r, missionResult: r.missionResult ? { ...r.missionResult, areaScores: r.missionResult.areaScores as AreaScores | null,
+        criteria: judgements && r.mission ? describeJudgements(r.mission.missionId, r.mission.rubricVersion, judgements) : null } : null,
+        learningSessionStartedAt: r.learningSessionStartedAt.toISOString(), learningSessionEndedAt: r.learningSessionEndedAt?.toISOString() ?? null };
+    });
     const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`))
       .orderBy(desc(learningSessionNotes.learningEndDateKst));
-    return { emailAddress: who.emailAddress, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
+    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
   });
 }
 

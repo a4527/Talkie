@@ -256,6 +256,53 @@ input[type=email] { font: inherit; font-size: 14px; padding: 12px 14px; border: 
 .note-waiting { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 20px 0; font-size: 14px; }
 .pulse { width: 12px; height: 12px; border-radius: 50%; background: #7f9a3f; animation: breathe 1.2s ease-in-out infinite; }
 
+/* Mission selection and result */
+.mode-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mission-setup { margin-top: 14px; display: grid; gap: 16px; }
+.mission-setup h2 { margin: 4px 0 6px; }
+.mission-setup p { font-size: 13px; }
+.mission-facts { display: grid; gap: 10px; margin: 0; font-size: 13px; }
+.mission-facts > div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 12px; }
+.mission-facts dt { color: var(--muted); font-weight: 600; }
+.mission-facts dd { margin: 0; }
+.goal-list { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; }
+.choice-group { border: 0; padding: 0; margin: 0; min-width: 0; }
+.choice-group legend { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice { font: inherit; font-size: 13px; color: var(--ink); background: var(--paper); border: 1.5px solid var(--line); border-radius: 20px; padding: 7px 16px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.choice.selected { border-color: var(--green); background: #f3f6ea; box-shadow: inset 0 0 0 1px var(--green); }
+.choice-tag { font-size: 10px; color: var(--muted); }
+.mission-brief p { font-size: 13px; }
+.mission-result { display: grid; gap: 12px; margin-bottom: 16px; }
+.mission-result h2 { margin: 0; }
+.mission-meta { font-size: 12px; color: var(--muted); margin: 0; }
+.mission-outcome { font-weight: 600; margin: 0; }
+.mission-outcome.goal_completed { color: var(--green); }
+.mission-outcome.no_progress_failed { color: #8a4b2d; }
+.score-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.score-summary .small-label { margin: 0 0 4px; display: block; }
+.score-total { margin: 0; font-size: 15px; }
+.score-total strong { font-size: 30px; font-family: Georgia, serif; }
+.score-rate { display: grid; justify-items: end; gap: 6px; }
+.score-rate strong { font-size: 22px; }
+.pill.met { background: #dfeac6; color: var(--green); }
+.pill.unmet { background: #f1ebe2; color: #7a5a3c; }
+.area-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.area-table th, .area-table td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+.area-table thead th { font-size: 11px; color: var(--muted); font-weight: 600; }
+.criteria { display: grid; gap: 8px; }
+.criteria details { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.criteria summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.criteria ul { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 14px; }
+.criterion p { font-size: 13px; margin: 6px 0; }
+.criterion blockquote { margin-top: 6px; }
+.criterion blockquote.counter { border-left-color: #d3b99a; }
+.criterion-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.criterion-points { color: var(--muted); font-size: 12px; }
+.verdict { font-size: 11px; padding: 2px 9px; border-radius: 20px; background: #eef1e6; color: #57664f; }
+.verdict.met { background: #dfeac6; color: var(--green); }
+.verdict.unmet { background: #f1ebe2; color: #7a5a3c; }
+.verdict.undeterminable { background: #ecebe8; color: #6c6a64; }
 @media (max-width: 900px) {
   .shell { padding: 0 25px; }
   .welcome { gap: 35px; }
@@ -269,7 +316,8 @@ input[type=email] { font: inherit; font-size: 14px; padding: 12px 14px; border: 
   .app-nav { gap: 2px; }
   .app-nav a:not(.primary) { padding: 6px 8px; font-size: 12px; }
   .nav-start { display: none !important; }
-  .steps, .note-grid, .mode-grid { grid-template-columns: 1fr; }
+  .steps, .note-grid, .mode-grid, .mode-grid.three { grid-template-columns: 1fr; }
+  .mission-facts > div { grid-template-columns: 1fr; gap: 2px; }
   .auth-layout, .home-hero { grid-template-columns: 1fr; gap: 28px; padding: 26px 0 40px; }
   .auth-card, .note-article { padding: 22px; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
