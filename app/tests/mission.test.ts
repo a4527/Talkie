@@ -5,6 +5,8 @@ vi.mock("../src/server/auth", () => ({ withIdentity: vi.fn(), digest: (s: string
 vi.mock("../src/server/learning", () => ({ startLearning: vi.fn(), saveLearning: vi.fn(), listLearningRecords: vi.fn(), endLearning: vi.fn(), completeLearningNote: vi.fn(), updateLearningHeartbeat: vi.fn() }));
 import { currentMission, findMissionDefinition, findMissionRubric, listStartableMissions, parseMissionStartRequest, toPublicMission, validateMission, type MissionRubric } from "../src/mission/definitions";
 import { startLearning } from "../src/server/learning";
+import { resumeMissionProgress, validateMissionProgress } from "../src/mission/progress";
+import type { Turn } from "../src/learning/types";
 import { POST as learnPost } from "../src/app/api/learn/route";
 
 describe("mission registry", () => {
@@ -69,5 +71,39 @@ describe("mission start route", () => {
       expect(await response.json()).toEqual({ error: "INVALID_REQUEST" });
     }
     expect(startLearning).not.toHaveBeenCalled();
+  });
+});
+
+describe("mission progress", () => {
+  const turns: Turn[] = [{ turnId: "u1", requestId: "u1", role: "user", text: "I ordered a hot decaf." }, { turnId: "a1", requestId: "u1", role: "assistant", text: "I can remake it or refund it." },
+    { turnId: "u2", requestId: "u2", role: "user", text: "A remake, please." }, { turnId: "a2", requestId: "u2", role: "assistant", text: "Sure, a hot decaf latte in five minutes." }];
+  const event = (eventId: string, kind: string, evidenceTurnId: string, routeId = "remake") => ({ eventId, kind, routeId, evidenceTurnId });
+  const none = { count: 0, evidenceTurnIds: [] };
+  it("accepts route events with role-checked evidence and drops empty progress", () => {
+    const progress = validateMissionProgress({ routeEvents: [event("e1", "proposed", "a1"), event("e2", "user_accepted", "u2"), event("e3", "staff_confirmed", "a2")], noProgress: none }, turns);
+    expect(progress?.routeEvents.map(e => e.kind)).toEqual(["proposed", "user_accepted", "staff_confirmed"]);
+    expect(validateMissionProgress(undefined, turns)).toBeUndefined();
+    expect(validateMissionProgress({ routeEvents: [], noProgress: none }, turns)).toBeUndefined();
+  });
+  it("rejects wrong roles, unknown turns, duplicates, bad kinds and inconsistent no-progress evidence", () => {
+    const bad = [
+      { routeEvents: [event("e1", "user_accepted", "a1")], noProgress: none },
+      { routeEvents: [event("e1", "staff_confirmed", "u2")], noProgress: none },
+      { routeEvents: [event("e1", "proposed", "missing")], noProgress: none },
+      { routeEvents: [event("e1", "proposed", "a1"), event("e1", "proposed", "a2")], noProgress: none },
+      { routeEvents: [event("e1", "approved", "a1")], noProgress: none },
+      { routeEvents: [event("e1", "proposed", "a1", "Remake!")], noProgress: none },
+      { routeEvents: [], noProgress: { count: 2, evidenceTurnIds: ["u1"] } },
+      { routeEvents: [], noProgress: { count: 1, evidenceTurnIds: ["missing"] } },
+      { routeEvents: [], noProgress: { count: -1, evidenceTurnIds: [] } },
+      { routeEvents: [] },
+      [],
+    ];
+    for (const input of bad) expect(() => validateMissionProgress(input, turns), JSON.stringify(input)).toThrow("INVALID_MISSION_PROGRESS");
+  });
+  it("keeps route events and restarts the no-progress streak on resume", () => {
+    const progress = validateMissionProgress({ routeEvents: [event("e1", "proposed", "a1")], noProgress: { count: 2, evidenceTurnIds: ["u1", "u2"] } }, turns);
+    expect(resumeMissionProgress(progress)).toEqual({ routeEvents: progress!.routeEvents, noProgress: none });
+    expect(resumeMissionProgress(validateMissionProgress({ routeEvents: [], noProgress: { count: 1, evidenceTurnIds: ["u1"] } }, turns))).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import { buildVoiceNoteMarkdown } from "../src/voice/note";
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { databases, closeDatabases } from "../src/server/db";
 import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "../src/server/db/records-schema";
@@ -358,7 +358,44 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       }
     }
   });
+  it("confirms mission progress with the save sequence, merges route events and restarts no-progress on resume", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    try {
+      const raw = await login(), other = await login("other@example.test");
+      const s = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" });
+      const turns = [{ turnId: "u1", requestId: "u1", role: "user", text: "I ordered a hot decaf." }, { turnId: "a1", requestId: "u1", role: "assistant", text: "I can remake it or refund it." },
+        { turnId: "u2", requestId: "u2", role: "user", text: "A remake, please." }];
+      const proposed = { eventId: "e1", kind: "proposed", routeId: "remake", evidenceTurnId: "a1" }, accepted = { eventId: "e2", kind: "user_accepted", routeId: "remake", evidenceTurnId: "u2" };
+      const snap = (missionProgress: unknown, list = turns) => ({ learningState: "conversation", corrections: [], turns: list, missionProgress });
+      // Routes outside the fixed definition are rejected before anything is stored.
+      await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, snap({ routeEvents: [{ ...proposed, routeId: "discount" }], noProgress: { count: 0, evidenceTurnIds: [] } })), /INVALID_RECORD/);
+      await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, snap({ routeEvents: [proposed], noProgress: { count: 1, evidenceTurnIds: ["u1"] } }));
+      // A later window without the old event keeps it; the no-progress streak follows the latest save.
+      await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 2, snap({ routeEvents: [accepted], noProgress: { count: 2, evidenceTurnIds: ["u1", "u2"] } }));
+      await assert.rejects(saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 3, snap({ routeEvents: [{ ...accepted, routeId: "refund" }], noProgress: { count: 0, evidenceTurnIds: [] } })), /SAVE_SEQUENCE_CONFLICT/,
+        "A confirmed route event is immutable");
+      const [stored] = await databases().transcripts.select().from(transcriptSaves).where(and(eq(transcriptSaves.learningSessionId, s.learningSessionId), eq(transcriptSaves.saveSequenceNumber, 2)));
+      assert.deepEqual((stored.conversationSnapshot as { mission: unknown }).mission, { events: [{ id: "e2", kind: "user_accepted", route: "remake", turn: "u2" }], noProgress: { count: 2, turns: ["u1", "u2"] } });
+      await updateLearningHeartbeat(raw, s.learningSessionId, s.learningConnectionToken, true);
+      const resumed = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" });
+      assert.equal(resumed.confirmedSaveSequenceNumber, 2);
+      assert.deepEqual(resumed.conversationSnapshot.missionProgress, { routeEvents: [proposed, accepted], noProgress: { count: 0, evidenceTurnIds: [] } });
+      // Free sessions never carry mission progress.
+      const free = await startLearning(other, "voice");
+      await assert.rejects(saveLearning(other, free.learningSessionId, free.learningConnectionToken, 1, snap({ routeEvents: [proposed], noProgress: { count: 0, evidenceTurnIds: [] } })), /INVALID_RECORD/);
+      await saveLearning(other, free.learningSessionId, free.learningConnectionToken, 1, snap(undefined));
+      assert.equal((await startLearning(other, "voice").catch(() => null)), null, "Still connected; no second session");
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
   it("reads retained difficulty outside the review window and keeps topic context isolated", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    try {
     const raw = await login(), other = await login("other@example.test");
     const next = await startLearning(raw, "voice"), otherNext = await startLearning(other, "voice");
     const { now, userId } = await withIdentity(raw, async (tx, who) => ({ now: await dbNow(tx), userId: who.userId }));
@@ -381,6 +418,11 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     assert.deepEqual((await getVoiceLearningContext(other, otherNext.learningSessionId, otherNext.learningConnectionToken)).priorLearningContext, { reviewExpressions: [] });
     await databases().records.update(learningSessionNotes).set({ noteRetentionExpiresAt: new Date(0) }).where(eq(learningSessionNotes.learningSessionId, seeded[0]));
     assert.equal((await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext.difficulty, undefined);
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
   });
   it("enforces one connection, isolated ownership and idempotent/save-sequence-conflict saves", async () => {
     const raw = await login(), b = await login("b@example.test");

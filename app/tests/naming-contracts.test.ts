@@ -34,6 +34,22 @@ describe("stored naming compatibility", () => {
     const renamed = validateConversationSnapshot(legacySnapshot);
     expect(() => validateConversationSnapshot({ ...renamed, corrections: [{ ...renamed.corrections[0], deliveredTurnId: "missing" }] })).toThrow("INVALID_RECORD");
   });
+  it("stores mission progress under a short key only when non-empty and round-trips it", () => {
+    const base = validateConversationSnapshot(legacySnapshot);
+    // Empty progress is never serialized, so legacy bytes and hashes stay unchanged.
+    const empty = validateConversationSnapshot({ ...base, missionProgress: { routeEvents: [], noProgress: { count: 0, evidenceTurnIds: [] } } });
+    expect(empty.missionProgress).toBeUndefined();
+    expect(JSON.stringify(encodeStoredConversationSnapshot(empty))).toBe(JSON.stringify(legacySnapshot));
+    const withProgress = validateConversationSnapshot({ ...base, missionProgress: {
+      routeEvents: [{ eventId: "e1", kind: "proposed", routeId: "remake", evidenceTurnId: "a1" }, { eventId: "e2", kind: "user_accepted", routeId: "remake", evidenceTurnId: "u2" }],
+      noProgress: { count: 1, evidenceTurnIds: ["u2"] } } });
+    const stored = encodeStoredConversationSnapshot(withProgress);
+    expect(JSON.stringify(stored)).toBe(JSON.stringify(legacySnapshot).slice(0, -1) +
+      ',"mission":{"events":[{"id":"e1","kind":"proposed","route":"remake","turn":"a1"},{"id":"e2","kind":"user_accepted","route":"remake","turn":"u2"}],"noProgress":{"count":1,"turns":["u2"]}}}');
+    expect(validateConversationSnapshot(JSON.parse(JSON.stringify(stored)))).toEqual(withProgress);
+    expect(() => validateConversationSnapshot({ ...stored, mission: null })).toThrow("INVALID_RECORD");
+    expect(() => validateConversationSnapshot({ ...base, missionProgress: { routeEvents: [{ eventId: "e1", kind: "user_accepted", routeId: "remake", evidenceTurnId: "a1" }], noProgress: { count: 0, evidenceTurnIds: [] } } })).toThrow("INVALID_RECORD");
+  });
 });
 
 // Exercise the real route parser/response helpers; only authenticated domain work

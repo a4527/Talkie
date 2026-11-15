@@ -1,3 +1,5 @@
+import type { MissionProgress } from "../mission/progress";
+
 export type LearningState = "conversation" | "retry";
 export type LearningPhase = "ready" | "waiting" | LearningState | "paused" | "ended";
 
@@ -88,7 +90,9 @@ export interface LearningSessionState {
   metrics: readonly LearningMetric[];
 }
 
-export type ConversationSnapshot = Pick<LearningSessionState, "turns" | "corrections" | "learningState"> & { hasConversationGaps?: boolean };
+export type ConversationSnapshot = Pick<LearningSessionState, "turns" | "corrections" | "learningState"> & { hasConversationGaps?: boolean;
+  /** Mission sessions only; omitted when empty so legacy snapshots keep their bytes and hash. */
+  missionProgress?: MissionProgress };
 
 // Browser-safe response fields; no credentials, database rows or server imports.
 export interface LearningRecordsResponse {

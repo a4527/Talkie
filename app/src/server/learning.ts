@@ -11,6 +11,7 @@ import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
 import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions } from "./db/records-schema";
 import { currentMission, findMissionDefinition, toPublicMission, type MissionStartRequest, type PublicMission } from "../mission/definitions";
+import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
 import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
 import type { LearningSessionState, Correction, ConversationSnapshot, LearningRecordsResponse } from "../learning/types";
@@ -25,7 +26,7 @@ export function validateConversationSnapshot(input: unknown): ConversationSnapsh
   const value = (legacy ? {
     turns: Array.isArray(source.turns) ? source.turns.map(t => t && ({ turnId: t.id, requestId: t.requestId, role: t.role, text: t.text })) : source.turns,
     corrections: Array.isArray(source.corrections) ? source.corrections.map(c => c && ({ correctionId: c.id, sourceTurnId: c.sourceTurnId, deliveredTurnId: c.deliveredTurnId, replacement: c.replacement, explanation: c.explanation, attempts: c.attempts })) : source.corrections,
-    learningState: source.learning, hasConversationGaps: source.gaps,
+    learningState: source.learning, hasConversationGaps: source.gaps, missionProgress: decodeStoredMissionProgress(source.mission),
   } : source) as ConversationSnapshot;
   if (!Array.isArray(value.turns) || !Array.isArray(value.corrections) || !["retry", "conversation"].includes(value.learningState)) throw new AppError("INVALID_RECORD");
   if (Buffer.byteLength(JSON.stringify(value)) > 256 * 1024 || value.turns.length > 500) throw new AppError("RECORD_TOO_LARGE", 413);
@@ -44,7 +45,15 @@ export function validateConversationSnapshot(input: unknown): ConversationSnapsh
     });
     return { correctionId: c.correctionId, sourceTurnId: c.sourceTurnId, deliveredTurnId: c.deliveredTurnId, replacement: c.replacement, explanation: c.explanation, attempts };
   });
-  return { turns, corrections, learningState: value.learningState, hasConversationGaps: value.hasConversationGaps === true };
+  let missionProgress: MissionProgress | undefined;
+  try { missionProgress = validateMissionProgress(value.missionProgress, turns); } catch { throw new AppError("INVALID_RECORD"); }
+  return { turns, corrections, learningState: value.learningState, hasConversationGaps: value.hasConversationGaps === true, ...(missionProgress ? { missionProgress } : {}) };
+}
+function decodeStoredMissionProgress(stored: unknown) {
+  if (stored === undefined) return undefined;
+  const m = stored as { events?: unknown; noProgress?: { count?: unknown; turns?: unknown } } | null;
+  return { routeEvents: Array.isArray(m?.events) ? m.events.map(e => e && ({ eventId: e.id, kind: e.kind, routeId: e.route, evidenceTurnId: e.turn })) : m?.events,
+    noProgress: m?.noProgress && { count: m.noProgress.count, evidenceTurnIds: m.noProgress.turns } };
 }
 
 // This is a storage compatibility codec, not a new persistence format. Property
@@ -54,6 +63,11 @@ export function encodeStoredConversationSnapshot(conversationSnapshot: Conversat
     turns: conversationSnapshot.turns.map(t => ({ id: t.turnId, requestId: t.requestId, role: t.role, text: t.text })),
     corrections: conversationSnapshot.corrections.map(c => ({ id: c.correctionId, sourceTurnId: c.sourceTurnId, deliveredTurnId: c.deliveredTurnId, replacement: c.replacement, explanation: c.explanation, attempts: c.attempts })),
     learning: conversationSnapshot.learningState, gaps: conversationSnapshot.hasConversationGaps === true,
+    // Appended only when non-empty so snapshots without mission progress keep their legacy bytes/hash.
+    ...(conversationSnapshot.missionProgress ? { mission: {
+      events: conversationSnapshot.missionProgress.routeEvents.map(e => ({ id: e.eventId, kind: e.kind, route: e.routeId, turn: e.evidenceTurnId })),
+      noProgress: { count: conversationSnapshot.missionProgress.noProgress.count, turns: conversationSnapshot.missionProgress.noProgress.evidenceTurnIds },
+    } } : {}),
   };
 }
 
@@ -73,6 +87,10 @@ async function readConfirmed(row: LearningRow): Promise<ConversationSnapshot> {
   if (!stored.length || stored.at(-1)!.saveSequenceNumber !== row.confirmedSaveSequenceNumber) throw new AppError("RECORD_UNAVAILABLE", 409);
   const turns = new Map<string, LearningSessionState["turns"][number]>(), corrections = new Map<string, Correction>();
   let learningState: ConversationSnapshot["learningState"] = "conversation", hasConversationGaps = false;
+  // Route events accumulate by ID like corrections (a bounded client window may drop old ones);
+  // the no-progress streak is the latest save's value.
+  const routeEvents = new Map<string, MissionRouteEvent>();
+  let noProgress: MissionProgress["noProgress"] = { count: 0, evidenceTurnIds: [] };
   for (const saved of stored) {
     const conversationSnapshot = validateConversationSnapshot(saved.conversationSnapshot);
     for (const turn of conversationSnapshot.turns) {
@@ -81,9 +99,16 @@ async function readConfirmed(row: LearningRow): Promise<ConversationSnapshot> {
       turns.set(turn.turnId, turn);
     }
     for (const correction of conversationSnapshot.corrections) corrections.set(correction.correctionId, correction);
+    for (const event of conversationSnapshot.missionProgress?.routeEvents ?? []) {
+      const old = routeEvents.get(event.eventId);
+      if (old && JSON.stringify(old) !== JSON.stringify(event)) throw new AppError("SAVE_SEQUENCE_CONFLICT", 409);
+      routeEvents.set(event.eventId, event);
+    }
+    noProgress = conversationSnapshot.missionProgress?.noProgress ?? { count: 0, evidenceTurnIds: [] };
     learningState = conversationSnapshot.learningState; hasConversationGaps ||= conversationSnapshot.hasConversationGaps === true;
   }
-  return { turns: [...turns.values()], corrections: [...corrections.values()], learningState, hasConversationGaps };
+  const missionProgress = routeEvents.size || noProgress.count ? { routeEvents: [...routeEvents.values()], noProgress } : undefined;
+  return { turns: [...turns.values()], corrections: [...corrections.values()], learningState, hasConversationGaps, ...(missionProgress ? { missionProgress } : {}) };
 }
 type MissionRow = typeof learningSessionMissions.$inferSelect;
 function publicMissionFromRow(row: MissionRow): PublicMission {
@@ -112,7 +137,8 @@ export async function startLearning(loginSessionToken: string | undefined, demoS
       if (!!previousMission !== !!missionRequest) throw new AppError("LEARNING_MODE_CONFLICT", 409);
       const learningSessionInterruptedAt = previous.learningSessionInterruptedAt ?? previous.learningConnectionExpiresAt ?? now;
       if (now.getTime() >= learningSessionInterruptedAt.getTime() + DAY) throw new AppError("SESSION_CLOSING", 409);
-      const conversationSnapshot = await readConfirmed(previous);
+      const { missionProgress: storedProgress, ...confirmed } = await readConfirmed(previous), missionProgress = resumeMissionProgress(storedProgress);
+      const conversationSnapshot: ConversationSnapshot = { ...confirmed, ...(missionProgress ? { missionProgress } : {}) };
       const learningConnectionToken = token();
       await tx.update(learningSessions).set({ learningSessionStatus: "active", learningSessionInterruptedAt: null, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000) }).where(eq(learningSessions.learningSessionId, previous.learningSessionId));
       return { learningSessionId: previous.learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: previous.confirmedSaveSequenceNumber, demoScenario: previous.demoScenario, conversationSnapshot,
@@ -161,14 +187,26 @@ export async function saveLearning(loginSessionToken: string | undefined, learni
     const row = await requireOwnedLearningSession(tx, who, learningSessionId), now = await dbNow(tx);
     requireLearningConnection(row, learningConnectionToken, now, true);
     if (row.noteGenerationStatus === "ready" || row.noteGenerationStatus === "empty" || (row.transcriptDeleteDeadlineAt && row.transcriptDeleteDeadlineAt <= now)) throw new AppError("SESSION_CLOSED", 409);
+    if (conversationSnapshot.missionProgress) {
+      // Progress only belongs to a mission session and may only name routes of its fixed definition.
+      const [missionRow] = await tx.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, learningSessionId));
+      const routes = new Set(missionRow ? findMissionDefinition(missionRow.missionId, missionRow.definitionVersion)?.routes.map(r => r.routeId) : []);
+      if (!missionRow || [...missionProgressRouteIds(conversationSnapshot.missionProgress)].some(id => !routes.has(id))) throw new AppError("INVALID_RECORD");
+    }
     if (saveSequenceNumber < row.confirmedSaveSequenceNumber || saveSequenceNumber > row.confirmedSaveSequenceNumber + 1) throw new AppError("SAVE_SEQUENCE_CONFLICT", 409);
     await databases().transcripts.transaction(async temp => {
       const [stored] = await temp.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, learningSessionId)).for("update");
       if (!stored || stored.sourceDeletedAt || (stored.transcriptDeleteDeadlineAt && stored.transcriptDeleteDeadlineAt <= now)) throw new AppError("SESSION_CLOSED", 409);
       const history = await temp.select().from(transcriptSaves).where(and(eq(transcriptSaves.learningSessionId, learningSessionId), sql`${transcriptSaves.saveSequenceNumber} <= ${row.confirmedSaveSequenceNumber}`));
-      const known = new Map<string, string>();
-      for (const saved of history) for (const turn of validateConversationSnapshot(saved.conversationSnapshot).turns) known.set(turn.turnId, JSON.stringify(turn));
+      const known = new Map<string, string>(), knownEvents = new Map<string, string>();
+      for (const saved of history) {
+        const previousSnapshot = validateConversationSnapshot(saved.conversationSnapshot);
+        for (const turn of previousSnapshot.turns) known.set(turn.turnId, JSON.stringify(turn));
+        for (const event of previousSnapshot.missionProgress?.routeEvents ?? []) knownEvents.set(event.eventId, JSON.stringify(event));
+      }
       if (conversationSnapshot.turns.some(turn => known.has(turn.turnId) && known.get(turn.turnId) !== JSON.stringify(turn))) throw new AppError("SAVE_SEQUENCE_CONFLICT", 409);
+      // Confirmed route events are immutable, like turns; otherwise a later read of the sequence would fail.
+      if (conversationSnapshot.missionProgress?.routeEvents.some(e => knownEvents.has(e.eventId) && knownEvents.get(e.eventId) !== JSON.stringify(e))) throw new AppError("SAVE_SEQUENCE_CONFLICT", 409);
       const [previous] = await temp.select().from(transcriptSaves).where(and(eq(transcriptSaves.learningSessionId, learningSessionId), eq(transcriptSaves.saveSequenceNumber, saveSequenceNumber)));
       if (previous && previous.snapshotHash !== hash) throw new AppError("SAVE_SEQUENCE_CONFLICT", 409);
       if (saveSequenceNumber === row.confirmedSaveSequenceNumber && !previous) throw new AppError("RECORD_UNAVAILABLE", 409);
