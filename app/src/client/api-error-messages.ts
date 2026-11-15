@@ -8,6 +8,8 @@ export const apiErrorMessages: Record<string, string> = {
   ORIGINAL_BROWSER_REQUIRED: "탈퇴 요청을 시작한 브라우저에서 확인해 주세요.", CONFIRM_DELETE_FIRST: "탈퇴 전에 이메일 본인 확인이 필요합니다.",
   ALREADY_CONNECTED: "다른 탭이나 기기에서 대화가 진행 중입니다. 기존 연결이 중단된 뒤 이어갈 수 있습니다.",
   LEARNING_MODE_CONFLICT: "다른 방식의 학습이 중단돼 있습니다. 기존 학습 화면에서 이어서 하거나 종료해 주세요.",
+  INVALID_MISSION: "선택한 미션을 시작할 수 없습니다. 미션 목록을 다시 확인해 주세요.",
+  MISSION_UNAVAILABLE: "미션 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
   GOOGLE_LOGIN_DISABLED: "Google 로그인이 설정되지 않았습니다. 이메일로 로그인해 주세요.",
   GOOGLE_AUTH_EXPIRED: "Google 로그인 시간이 지났습니다. 처음부터 다시 시도해 주세요.",
   GOOGLE_AUTH_CANCELLED: "Google 로그인을 취소했습니다.", GOOGLE_AUTH_FAILED: "Google 로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",

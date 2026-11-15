@@ -94,5 +94,7 @@ export type ConversationSnapshot = Pick<LearningSessionState, "turns" | "correct
 export interface LearningRecordsResponse {
   emailAddress: string;
   notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];
-  sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null }[];
+  sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null;
+    /** Null for legacy free-conversation sessions. */
+    mission: { missionId: string; definitionVersion: number; rubricVersion: number; missionMode: string; languageLevel: string; missionEndReason: string | null; finalRouteId: string | null } | null }[];
 }

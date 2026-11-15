@@ -65,3 +65,18 @@ export const googleIdentities = pgTable("google_identities", {
   googleSubject: text("google_subject").primaryKey(), userId: uuid("user_id").notNull().unique().references(() => users.userId, { onDelete: "cascade" }),
   googleEmailAddress: text("google_email_address").notNull(), googleIdentityLinkedAt: time("google_identity_linked_at").notNull(),
 });
+/** Mission, mode and level fixed at start (DEC-086, MISSIONS 최소 연결 계약). Fixed columns never change; end reason and final route are written once. */
+export const learningSessionMissions = pgTable("learning_session_missions", {
+  learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
+  missionId: text("mission_id").notNull(), definitionVersion: integer("definition_version").notNull(), rubricVersion: integer("rubric_version").notNull(),
+  missionMode: text("mission_mode").notNull(), languageLevel: text("language_level").notNull(),
+  missionEndReason: text("mission_end_reason"), finalRouteId: text("final_route_id"),
+}, t => [
+  foreignKey({ name: "learning_mission_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
+  index("learning_mission_user").on(t.userId),
+  check("learning_mission_mode", sql`${t.missionMode} in ('practice', 'real')`),
+  check("learning_mission_level", sql`${t.languageLevel} in ('A1', 'A2', 'B1', 'B2', 'C')`),
+  check("learning_mission_versions", sql`${t.definitionVersion} >= 1 and ${t.rubricVersion} >= 1`),
+  check("learning_mission_end_reason", sql`${t.missionEndReason} in ('goal_completed', 'no_progress_failed', 'user_ended', 'resume_expired')`),
+  check("learning_mission_final_route", sql`${t.finalRouteId} is null or ${t.missionEndReason} is not null`),
+]);

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { AppError } from "../../../server/config";
+import { parseMissionStartRequest } from "../../../mission/definitions";
 import { readJsonBody, LOGIN_SESSION_COOKIE_NAME, errorResponse, jsonResponse, requireString } from "../../../server/http";
 import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning } from "../../../server/learning";
 export const runtime = "nodejs";
@@ -12,7 +13,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const data = await readJsonBody(request), loginSessionToken = request.cookies.get(LOGIN_SESSION_COOKIE_NAME)?.value;
-    if (data.action === "start") return jsonResponse(await startLearning(loginSessionToken, requireString(data.scenario)), loginSessionToken);
+    if (data.action === "start") {
+      if (data.mission === undefined) return jsonResponse(await startLearning(loginSessionToken, requireString(data.scenario)), loginSessionToken);
+      // A mission start carries no scenario; it always uses the private voice path.
+      const mission = parseMissionStartRequest(data.mission);
+      if (data.scenario !== undefined || !mission) throw new AppError("INVALID_REQUEST");
+      return jsonResponse(await startLearning(loginSessionToken, "voice", mission), loginSessionToken);
+    }
     const learningSessionId = requireString(data.learningSessionId);
     if (data.action === "note") { await completeLearningNote(loginSessionToken, learningSessionId); return jsonResponse({ ok: true }, loginSessionToken); }
     const learningConnectionToken = requireString(data.learningConnectionToken);

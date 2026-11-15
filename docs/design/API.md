@@ -53,13 +53,13 @@
 
 | action | 요청 필드 (action 외) | 정상 응답 |
 | --- | --- | --- |
-| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot}`. 진행 대화가 있으면 재개 조건 확인 |
+| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) 또는 `mission: {missionId, missionMode: practice·real, languageLevel: A1·A2·B1·B2·C}` 중 하나 | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot, mission}`. `mission`은 공개 정보(상황·역할·화면 목표·버전·모드·수준) 또는 `null`. 미션 시작은 비공개 음성 경로를 사용하고, 진행 대화가 있으면 요청값 대신 저장값으로 재개한다 |
 | `save` | `learningSessionId`, `learningConnectionToken`, `saveSequenceNumber`, `conversationSnapshot` | `{confirmedSaveSequenceNumber}` |
 | `end` | `learningSessionId`, `learningConnectionToken` | `{learningSessionEndedAt}` |
 | `heartbeat`, `pause` | `learningSessionId`, `learningConnectionToken` | `{ok: true}` |
 | `note` | `learningSessionId` | `{ok: true}`. 텍스트 연습은 가짜 노트, 음성은 별도 AI 추출·근거 검증으로 정리. 연결 토큰은 요구하지 않음 |
 
-음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다.
+음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이나 미션/자유 대화 여부가 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다. 알 수 없거나 유효하지 않은 미션은 `INVALID_MISSION`, `scenario`와 `mission`을 함께 보내거나 형식이 틀리면 `INVALID_REQUEST`다. 조회의 세션 항목에는 `mission`(ID·버전·모드·수준·종료 사유·최종 경로 또는 `null`)을 포함한다.
 
 `ConversationSnapshot`의 구조는 런타임 타입, 저장 JSON의 구형 키·해시 호환성은 [DB 저장 형식](DATABASE.md#저장-json과-이관-호환성), 저장·재시도·종료 순서는 [학습 저장 설계](LEARNING-PERSISTENCE.md)를 따른다.
 
@@ -73,7 +73,7 @@
 
 | HTTP 상태 | 코드 예시·의미 |
 | --- | --- |
-| 400 | `INVALID_REQUEST` 등 JSON/필드 오류, `INVALID_LINK`·`EXPIRED_LINK`·`USED_LINK`·`REPLACED_LINK` 등 링크 오류 |
+| 400 | `INVALID_REQUEST`·`INVALID_MISSION` 등 JSON/필드 오류, `INVALID_LINK`·`EXPIRED_LINK`·`USED_LINK`·`REPLACED_LINK` 등 링크 오류 |
 | 401 | `LOGIN_REQUIRED` |
 | 403 | `FORBIDDEN_ORIGIN`, `ORIGINAL_BROWSER_REQUIRED`, `VOICE_TEST_DISABLED`, `VOICE_TEST_ACK_REQUIRED` |
 | 404 | `NOT_FOUND` |

@@ -9,7 +9,8 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
-import { scheduledJobs, learningSessions, learningSessionNotes } from "./db/records-schema";
+import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions } from "./db/records-schema";
+import { currentMission, findMissionDefinition, toPublicMission, type MissionStartRequest, type PublicMission } from "../mission/definitions";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
 import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
 import type { LearningSessionState, Correction, ConversationSnapshot, LearningRecordsResponse } from "../learning/types";
@@ -84,7 +85,22 @@ async function readConfirmed(row: LearningRow): Promise<ConversationSnapshot> {
   }
   return { turns: [...turns.values()], corrections: [...corrections.values()], learningState, hasConversationGaps };
 }
-export async function startLearning(loginSessionToken: string | undefined, demoScenario: string) {
+type MissionRow = typeof learningSessionMissions.$inferSelect;
+function publicMissionFromRow(row: MissionRow): PublicMission {
+  const definition = findMissionDefinition(row.missionId, row.definitionVersion);
+  // Stored versions are never removed from the registry; a miss is a deployment error, not user input.
+  if (!definition) throw new AppError("MISSION_UNAVAILABLE", 503);
+  return toPublicMission(definition, row.rubricVersion, { missionMode: row.missionMode as PublicMission["missionMode"], languageLevel: row.languageLevel as PublicMission["languageLevel"] });
+}
+/**
+ * Starts or resumes the account's single open learning session. A mission start always uses the
+ * private voice path and fixes mission/version/mode/level at creation; resuming ignores the request
+ * values and returns the stored ones. Mission and legacy free sessions never resume as each other.
+ */
+export async function startLearning(loginSessionToken: string | undefined, demoScenario: string, missionRequest?: MissionStartRequest) {
+  if (missionRequest && demoScenario !== "voice") throw new AppError("INVALID_REQUEST");
+  const mission = missionRequest && currentMission(missionRequest.missionId);
+  if (missionRequest && !mission) throw new AppError("INVALID_MISSION");
   if (demoScenario === "voice") requireVoiceTestConfiguration();
   return withIdentity(loginSessionToken, async (tx, who) => {
     const now = await dbNow(tx);
@@ -92,22 +108,32 @@ export async function startLearning(loginSessionToken: string | undefined, demoS
     if (previous?.learningConnectionExpiresAt && previous.learningConnectionExpiresAt > now && previous.learningSessionStatus === "active") throw new AppError("ALREADY_CONNECTED", 409);
     if (previous) {
       if ((previous.demoScenario === "voice") !== (demoScenario === "voice")) throw new AppError("LEARNING_MODE_CONFLICT", 409);
+      const [previousMission] = await tx.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, previous.learningSessionId));
+      if (!!previousMission !== !!missionRequest) throw new AppError("LEARNING_MODE_CONFLICT", 409);
       const learningSessionInterruptedAt = previous.learningSessionInterruptedAt ?? previous.learningConnectionExpiresAt ?? now;
       if (now.getTime() >= learningSessionInterruptedAt.getTime() + DAY) throw new AppError("SESSION_CLOSING", 409);
       const conversationSnapshot = await readConfirmed(previous);
       const learningConnectionToken = token();
       await tx.update(learningSessions).set({ learningSessionStatus: "active", learningSessionInterruptedAt: null, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000) }).where(eq(learningSessions.learningSessionId, previous.learningSessionId));
-      return { learningSessionId: previous.learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: previous.confirmedSaveSequenceNumber, demoScenario: previous.demoScenario, conversationSnapshot };
+      return { learningSessionId: previous.learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: previous.confirmedSaveSequenceNumber, demoScenario: previous.demoScenario, conversationSnapshot,
+        mission: previousMission ? publicMissionFromRow(previousMission) : null };
     }
     if (!["correction", "conversation", "voice"].includes(demoScenario)) throw new AppError("INVALID_SCENARIO");
     const learningSessionId = randomUUID(), learningConnectionToken = token();
     const emptyConversationSnapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation", hasConversationGaps: false };
     await tx.insert(learningSessions).values({ learningSessionId, userId: who.userId, learningSessionStartedAt: now, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000), demoScenario });
+    let fixedMission: PublicMission | null = null;
+    if (mission && missionRequest) {
+      // Same records transaction as the session row: an open session never exists without its fixed mission.
+      await tx.insert(learningSessionMissions).values({ learningSessionId, userId: who.userId, missionId: mission.definition.missionId, definitionVersion: mission.definition.definitionVersion,
+        rubricVersion: mission.rubric.rubricVersion, missionMode: missionRequest.missionMode, languageLevel: missionRequest.languageLevel });
+      fixedMission = toPublicMission(mission.definition, mission.rubric.rubricVersion, missionRequest);
+    }
     await databases().transcripts.transaction(async temp => {
       await temp.insert(transcriptSessionStates).values({ learningSessionId, userId: who.userId, transcriptStorageCreatedAt: sql`clock_timestamp()` });
       await temp.insert(transcriptSaves).values({ learningSessionId, saveSequenceNumber: 0, snapshotHash: digest(JSON.stringify(encodeStoredConversationSnapshot(emptyConversationSnapshot))), conversationSnapshot: encodeStoredConversationSnapshot(emptyConversationSnapshot) });
     });
-    return { learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: 0, demoScenario, conversationSnapshot: emptyConversationSnapshot };
+    return { learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: 0, demoScenario, conversationSnapshot: emptyConversationSnapshot, mission: fixedMission };
   });
 }
 
@@ -247,8 +273,11 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
   return withIdentity(loginSessionToken, async (tx, who) => {
     const now = await dbNow(tx);
     const rows = await tx.select({ learningSessionId: learningSessions.learningSessionId, learningSessionStatus: learningSessions.learningSessionStatus, noteGenerationStatus: learningSessions.noteGenerationStatus,
-      demoScenario: learningSessions.demoScenario, learningSessionStartedAt: learningSessions.learningSessionStartedAt, learningSessionEndedAt: learningSessions.learningSessionEndedAt })
-      .from(learningSessions).where(eq(learningSessions.userId, who.userId)).orderBy(desc(learningSessions.learningSessionStartedAt));
+      demoScenario: learningSessions.demoScenario, learningSessionStartedAt: learningSessions.learningSessionStartedAt, learningSessionEndedAt: learningSessions.learningSessionEndedAt,
+      mission: { missionId: learningSessionMissions.missionId, definitionVersion: learningSessionMissions.definitionVersion, rubricVersion: learningSessionMissions.rubricVersion,
+        missionMode: learningSessionMissions.missionMode, languageLevel: learningSessionMissions.languageLevel, missionEndReason: learningSessionMissions.missionEndReason, finalRouteId: learningSessionMissions.finalRouteId } })
+      .from(learningSessions).leftJoin(learningSessionMissions, and(eq(learningSessionMissions.learningSessionId, learningSessions.learningSessionId), eq(learningSessionMissions.userId, who.userId)))
+      .where(eq(learningSessions.userId, who.userId)).orderBy(desc(learningSessions.learningSessionStartedAt));
     const sessions = rows.map(r => ({ ...r, learningSessionStartedAt: r.learningSessionStartedAt.toISOString(), learningSessionEndedAt: r.learningSessionEndedAt?.toISOString() ?? null }));
     const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`))
       .orderBy(desc(learningSessionNotes.learningEndDateKst));

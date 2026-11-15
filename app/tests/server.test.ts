@@ -11,7 +11,7 @@ import { consumeLink, deleteAccount, dbNow, digest, inspectLink, logout, request
 import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
 import { completeGoogleAuth, unlinkGoogle, type GoogleOAuthState } from "../src/server/google-auth";
-import { googleIdentities } from "../src/server/db/records-schema";
+import { googleIdentities, learningSessionMissions } from "../src/server/db/records-schema";
 import type { ExtractionGenerate } from "../src/voice/note-extraction";
 import { priorLearningWindow } from "../src/voice/prior-learning";
 import { boundRecords } from "../src/learning/buffer";
@@ -311,6 +311,47 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.deepEqual((await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken)).priorLearningContext.reviewExpressions,
         [{ expression: "At boundary.", observations: ["추천"] }]);
       assert.equal((await listLearningRecords(raw)).notes.length, 3, "Context window must not hide or delete retained notes");
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+  it("fixes a mission at start, resumes stored values and never mixes mission and free sessions", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    try {
+      const raw = await login(), other = await login("other@example.test");
+      await assert.rejects(startLearning(raw, "voice", { missionId: "unknown-mission", missionMode: "practice", languageLevel: "B1" }), /INVALID_MISSION/);
+      await assert.rejects(startLearning(raw, "correction", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "B1" }), /INVALID_REQUEST/);
+      assert.equal((await listLearningRecords(raw)).sessions.length, 0, "Rejected starts must not create a session");
+      const started = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B2" });
+      assert.equal(started.demoScenario, "voice");
+      assert.deepEqual({ ...started.mission, goals: undefined, title: undefined, situation: undefined, learnerRole: undefined, partnerRole: undefined },
+        { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B2", goals: undefined, title: undefined, situation: undefined, learnerRole: undefined, partnerRole: undefined });
+      assert.ok(!JSON.stringify(started.mission).includes("A different staff member"), "Partner knowledge must not reach the browser");
+      await assert.rejects(startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "A1" }), /ALREADY_CONNECTED/);
+      await updateLearningHeartbeat(raw, started.learningSessionId, started.learningConnectionToken, true);
+      // Resume ignores the new request values and returns what was fixed at start.
+      const resumed = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "A1" });
+      assert.equal(resumed.learningSessionId, started.learningSessionId);
+      assert.equal(resumed.mission?.missionMode, "real"); assert.equal(resumed.mission?.languageLevel, "B2");
+      await updateLearningHeartbeat(raw, resumed.learningSessionId, resumed.learningConnectionToken, true);
+      await assert.rejects(startLearning(raw, "voice"), /LEARNING_MODE_CONFLICT/, "A free voice start must not resume a mission");
+      const [stored] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, started.learningSessionId));
+      assert.deepEqual([stored.missionMode, stored.languageLevel, stored.definitionVersion, stored.rubricVersion, stored.missionEndReason], ["real", "B2", 1, 1, null]);
+      const listed = (await listLearningRecords(raw)).sessions[0].mission;
+      assert.deepEqual(listed, { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B2", missionEndReason: null, finalRouteId: null });
+      // A free voice session stays free: a mission start must not convert it.
+      const free = await startLearning(other, "voice");
+      await updateLearningHeartbeat(other, free.learningSessionId, free.learningConnectionToken, true);
+      await assert.rejects(startLearning(other, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "B1" }), /LEARNING_MODE_CONFLICT/);
+      assert.equal(free.mission, null);
+      assert.equal((await listLearningRecords(other)).sessions[0].mission, null);
+      await assert.rejects(databases().records.insert(learningSessionMissions).values({ learningSessionId: free.learningSessionId, userId: stored.userId, missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "practice", languageLevel: "B1" }),
+        postgresFailure("23503", "learning_mission_session_owner"), "Mission rows must belong to the session owner");
+      await assert.rejects(databases().records.update(learningSessionMissions).set({ missionMode: "casual" }).where(eq(learningSessionMissions.learningSessionId, started.learningSessionId)),
+        postgresFailure("23514", "learning_mission_mode"));
     } finally {
       for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;

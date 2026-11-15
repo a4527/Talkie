@@ -51,14 +51,14 @@ afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); });
 it("passes distinct learning identifiers and credentials through the renamed route", async () => {
   vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000");
   const conversationSnapshot = validateConversationSnapshot(legacySnapshot);
-  vi.mocked(startLearning).mockResolvedValue({ learningSessionId: "synthetic-learning", learningConnectionToken: "synthetic-connection", confirmedSaveSequenceNumber: 0, demoScenario: "correction", conversationSnapshot });
+  vi.mocked(startLearning).mockResolvedValue({ learningSessionId: "synthetic-learning", learningConnectionToken: "synthetic-connection", confirmedSaveSequenceNumber: 0, demoScenario: "correction", conversationSnapshot, mission: null });
   const response = await learnPost(request("learn", { action: "start", scenario: "correction" }));
   expect(startLearning).toHaveBeenCalledWith("synthetic-login", "correction");
   expect(await response.json()).toMatchObject({ learningSessionId: "synthetic-learning", learningConnectionToken: "synthetic-connection" });
   vi.mocked(saveLearning).mockResolvedValue({ confirmedSaveSequenceNumber: 1 });
   expect((await learnPost(request("learn", { action: "save", learningSessionId: "synthetic-learning", learningConnectionToken: "synthetic-connection", saveSequenceNumber: 1, conversationSnapshot }))).status).toBe(200);
   expect(saveLearning).toHaveBeenCalledWith("synthetic-login", "synthetic-learning", "synthetic-connection", 1, conversationSnapshot);
-  vi.mocked(listLearningRecords).mockResolvedValue({ emailAddress: "learner@example.test", notes: [{ learningSessionId: "synthetic-learning", learningEndDateKst: "2026-10-27", noteMarkdown: "Synthetic note" }], sessions: [{ learningSessionId: "synthetic-learning", learningSessionStatus: "ended", noteGenerationStatus: "ready", demoScenario: "correction", learningSessionStartedAt: "2026-10-27T01:00:00.000Z", learningSessionEndedAt: "2026-10-27T01:10:00.000Z" }] });
+  vi.mocked(listLearningRecords).mockResolvedValue({ emailAddress: "learner@example.test", notes: [{ learningSessionId: "synthetic-learning", learningEndDateKst: "2026-10-27", noteMarkdown: "Synthetic note" }], sessions: [{ learningSessionId: "synthetic-learning", learningSessionStatus: "ended", noteGenerationStatus: "ready", demoScenario: "correction", learningSessionStartedAt: "2026-10-27T01:00:00.000Z", learningSessionEndedAt: "2026-10-27T01:10:00.000Z", mission: null }] });
   const records = await learnGet(request("learn", {}));
   expect((await records.json()).sessions[0]).toMatchObject({ learningSessionStatus: "ended", noteGenerationStatus: "ready" });
 });
