@@ -53,7 +53,7 @@
 
 | action | 요청 필드 (action 외) | 정상 응답 |
 | --- | --- | --- |
-| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) 또는 `mission: {missionId, missionMode: practice·real, languageLevel: A1·A2·B1·B2·C}` 중 하나 | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot, mission}`. `mission`은 공개 정보(상황·역할·화면 목표·버전·모드·수준) 또는 `null`. 미션 시작은 비공개 음성 경로를 사용하고, 진행 대화가 있으면 요청값 대신 저장값으로 재개한다 |
+| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) 또는 `mission: {missionId, missionMode: practice·real, languageLevel: A1·A2·B1·B2·C}` 중 하나 | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot, mission}`. `mission`은 공개 정보(상황·역할·화면 목표·버전·모드·수준·경로 ID `routeIds`) 또는 `null`. 미션 시작은 비공개 음성 경로를 사용하고, 진행 대화가 있으면 요청값 대신 저장값으로 재개한다 |
 | `save` | `learningSessionId`, `learningConnectionToken`, `saveSequenceNumber`, `conversationSnapshot`(미션 세션은 선택 `missionProgress` 포함 가능, [진행 상태](MISSIONS.md#최소-연결-계약)) | `{confirmedSaveSequenceNumber}`. 자유 대화의 `missionProgress`·고정 정의에 없는 경로는 `INVALID_RECORD`, 확정된 경로 사건 변경은 `SAVE_SEQUENCE_CONFLICT` |
 | `end` | `learningSessionId`, `learningConnectionToken` | `{learningSessionEndedAt}` |
 | `heartbeat`, `pause` | `learningSessionId`, `learningConnectionToken` | `{ok: true}` |
@@ -65,7 +65,7 @@
 
 ## 비공개 음성 토큰 API
 
-`POST /api/voice/token`은 `{testOnly: true}`와 로그인 쿠키를 받아 `{voiceConnectionToken, testDurationSeconds}`를 반환한다. 현재 시험 시간은 180초다. 로그인·동일 출처·무료 시험 설정과 발급 간격을 확인한 뒤 서버가 공급자에 단기 연결 토큰을 요청한다. 브라우저에는 장기 API 키를 전달하지 않는다. 저장 학습 응답에는 `priorLearningContext`도 포함하며 선택된 복습 표현과 관찰을 담고, 유효한 상단 항목이 있으면 주제·난이도도 포함한다. 실제 연습일이 미확인이면 날짜를 생략하며 노트 등장일로 대신하지 않는다. 선택 규칙·상한과 현재 대화와의 구분은 [음성 설계](VOICE.md#튜터-프롬프트와-컨텍스트-경계)를 따른다. 메모리 전용 시험에는 이 필드를 반환하지 않는다. 저장 학습은 `learningSessionId`·`learningConnectionToken`도 보내며 본인 음성 학습의 유효 연결을 확인한 뒤 구조화 학습 도구가 포함된 설정으로 토큰을 발급한다. 기존 메모리 전용 시험은 이 필드 없이 유지한다.
+`POST /api/voice/token`은 `{testOnly: true}`와 로그인 쿠키를 받아 `{voiceConnectionToken, testDurationSeconds}`를 반환한다. 현재 시험 시간은 180초다. 로그인·동일 출처·무료 시험 설정과 발급 간격을 확인한 뒤 서버가 공급자에 단기 연결 토큰을 요청한다. 브라우저에는 장기 API 키를 전달하지 않는다. 저장 학습 응답에는 `priorLearningContext`도 포함하며 선택된 복습 표현과 관찰을 담고, 유효한 상단 항목이 있으면 주제·난이도도 포함한다. 실제 연습일이 미확인이면 날짜를 생략하며 노트 등장일로 대신하지 않는다. 선택 규칙·상한과 현재 대화와의 구분은 [음성 설계](VOICE.md#튜터-프롬프트와-컨텍스트-경계)를 따른다. 메모리 전용 시험에는 이 필드를 반환하지 않는다. 저장 학습은 `learningSessionId`·`learningConnectionToken`도 보내며 본인 음성 학습의 유효 연결을 확인한 뒤 구조화 학습 도구가 포함된 설정으로 토큰을 발급한다. 미션 세션이면 서버가 고정 정의로 만든 미션 지시와 모드별 도구(연습: 교정+미션 상태, 실전: 미션 상태만)로 토큰을 발급하고 응답에 `missionMode`만 더한다. 미션 지시(상대역 지식)는 응답에 넣지 않는다. 분리형 `credential` 응답도 같은 `missionMode`를 더하고 `text` 응답에 선택 필드 `missionReport`를 둔다. 기존 메모리 전용 시험은 이 필드 없이 유지한다.
 
 구현: [voice/token 라우트](../../app/src/app/api/voice/token/route.ts), [토큰 발급](../../app/src/server/voice-token.ts). 무료 여부의 수동 확인·직접 연결 제한은 [음성 설계](VOICE.md)를 따른다. Google 소셜 로그인과 Gemini 공급자 연결 토큰은 별개다.
 

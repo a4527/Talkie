@@ -1,6 +1,6 @@
 import "server-only";
 import { AppError, getLocalConfig } from "./config";
-import { createGeminiLiveSetup, VOICE_TEST_SECONDS } from "../voice/gemini-live-setup";
+import { createGeminiLiveSetup, VOICE_TEST_SECONDS, type GeminiMissionSetup } from "../voice/gemini-live-setup";
 
 // Local, single-process test guard only. This is not an operational quota or cost system.
 const issuedUntil = new Map<string, number>();
@@ -13,7 +13,8 @@ export function requireVoiceTestConfiguration() {
   if (!key) throw new AppError("VOICE_KEY_REQUIRED", 503);
   return key;
 }
-export async function issueVoiceToken(userId: string, request: typeof fetch = fetch, learning = false) {
+/** `mission` carries the server-built instruction; it is locked into the token and never returned to the browser. */
+export async function issueVoiceToken(userId: string, request: typeof fetch = fetch, learning = false, mission?: Required<GeminiMissionSetup>) {
   const key = requireVoiceTestConfiguration();
   const now = Date.now();
   for (const [id, until] of issuedUntil) if (until <= now) issuedUntil.delete(id);
@@ -24,7 +25,7 @@ export async function issueVoiceToken(userId: string, request: typeof fetch = fe
       method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({ uses: 1, expireTime: new Date(now + (VOICE_TEST_SECONDS + 60) * 1000).toISOString(),
         newSessionExpireTime: new Date(now + 60_000).toISOString(),
-        bidiGenerateContentSetup: createGeminiLiveSetup(learning) }),
+        bidiGenerateContentSetup: createGeminiLiveSetup(learning, mission) }),
       signal: AbortSignal.timeout(10_000), cache: "no-store",
     });
     if (!res.ok) throw new AppError("VOICE_TOKEN_UNAVAILABLE", 503);

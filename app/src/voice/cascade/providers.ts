@@ -18,7 +18,7 @@ export type CascadeRequest = {
 };
 export interface TextResponder {
   // Stateless: every request contains only app-confirmed history. No hidden provider conversation.
-  respond(request: CascadeRequest, signal: AbortSignal): Promise<{ text: string; learningResult?: unknown }>;
+  respond(request: CascadeRequest, signal: AbortSignal): Promise<{ text: string; learningResult?: unknown; missionReport?: unknown }>;
 }
 export type SpeechChunk = { pcm: Uint8Array; sampleRateHz: number };
 export interface SpeechSynthesizer {

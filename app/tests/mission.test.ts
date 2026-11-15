@@ -44,7 +44,8 @@ describe("mission registry", () => {
   it("keeps partner knowledge, routes and rubric out of the public view", () => {
     const { definition, rubric } = currentMission("cafe-wrong-order")!;
     const view = toPublicMission(definition, rubric.rubricVersion, { missionMode: "real", languageLevel: "A2" });
-    expect(Object.keys(view).sort()).toEqual(["definitionVersion", "goals", "languageLevel", "learnerRole", "missionId", "missionMode", "partnerRole", "rubricVersion", "situation", "title"]);
+    expect(Object.keys(view).sort()).toEqual(["definitionVersion", "goals", "languageLevel", "learnerRole", "missionId", "missionMode", "partnerRole", "routeIds", "rubricVersion", "situation", "title"]);
+    expect(view.routeIds).toEqual(["remake", "refund"]);
     const text = JSON.stringify(view);
     for (const hidden of [...definition.partner.knowsAtStart, ...definition.partner.rules, ...definition.routes.map(r => r.fixedConditions), ...rubric.goalCriteria.map(c => c.evidence)]) expect(text).not.toContain(hidden);
   });

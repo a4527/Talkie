@@ -1,11 +1,14 @@
 import type { ConversationSnapshot } from "../learning/types";
+import type { PublicMission } from "../mission/definitions";
 export async function requestLearningAction(data: Record<string, unknown>) {
   const response = await fetch("/api/learn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error);
   return result;
 }
-export type StoredVoiceSession = { learningSessionId: string; learningConnectionToken: string; confirmedSaveSequenceNumber: number; conversationSnapshot: ConversationSnapshot };
+export type StoredVoiceSession = { learningSessionId: string; learningConnectionToken: string; confirmedSaveSequenceNumber: number; conversationSnapshot: ConversationSnapshot;
+  /** Present for mission sessions (start/resume response); null or absent for free conversation. */
+  mission?: PublicMission | null };
 /** Keep the same sequence/body when retrying a failed or unacknowledged save. */
 export class VoiceLearningStore {
   private sequence: number;

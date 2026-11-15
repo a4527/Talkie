@@ -51,5 +51,5 @@ it("checks the owned learning connection before issuing a learning-enabled token
   expect(response.status).toBe(200);
   expect((await response.json()).priorLearningContext).toEqual({ reviewExpressions: [] });
   expect(getVoiceLearningContext).toHaveBeenLastCalledWith("synthetic-session", "synthetic-learning", "synthetic-connection");
-  expect(issueVoiceToken).toHaveBeenCalledWith("synthetic-user", fetch, true);
+  expect(issueVoiceToken).toHaveBeenCalledWith("synthetic-user", fetch, true, undefined);
 });

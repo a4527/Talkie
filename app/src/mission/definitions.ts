@@ -33,6 +33,8 @@ export interface PublicMission extends MissionStartRequest {
   definitionVersion: number;
   rubricVersion: number;
   title: string; situation: string; learnerRole: string; partnerRole: string; goals: readonly string[];
+  /** Route IDs only (not partner knowledge), so the browser can drop reports naming unknown routes. */
+  routeIds: readonly string[];
 }
 
 export const GOAL_TOTAL_POINTS = 60;
@@ -162,8 +164,9 @@ export function parseMissionStartRequest(input: unknown): MissionStartRequest | 
   return { missionId: value.missionId, missionMode: value.missionMode as MissionMode, languageLevel: value.languageLevel as LanguageLevel };
 }
 
-/** Browser-safe view: no partner knowledge, routes or rubric. */
+/** Browser-safe view: no partner knowledge, route conditions or rubric. */
 export function toPublicMission(definition: MissionDefinition, rubricVersion: number, fixed: Omit<MissionStartRequest, "missionId">): PublicMission {
   return { missionId: definition.missionId, definitionVersion: definition.definitionVersion, rubricVersion,
-    missionMode: fixed.missionMode, languageLevel: fixed.languageLevel, ...definition.publicView, goals: [...definition.publicView.goals] };
+    missionMode: fixed.missionMode, languageLevel: fixed.languageLevel, ...definition.publicView, goals: [...definition.publicView.goals],
+    routeIds: definition.routes.map(r => r.routeId) };
 }

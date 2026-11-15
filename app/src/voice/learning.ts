@@ -1,6 +1,7 @@
 import { boundRecords } from "../learning/buffer";
 import type { ConversationSnapshot, Correction, Turn } from "../learning/types";
 import type { VoiceEvent } from "./port";
+import { MissionTracker, type MissionStateReport, type MissionTrackerConfig } from "../mission/realtime";
 
 export type VoiceLearningResult = {
   original: string; learningState: "conversation" | "retry";
@@ -23,13 +24,23 @@ export class VoiceLearningRecords {
   private snapshot: ConversationSnapshot;
   private acknowledged = new Set<string>();
   private cancelled = new Set<string>();
-  private pending = new Map<string, { role: Turn["role"]; text: string; complete?: boolean; played?: boolean; inputTurnId?: string; result?: VoiceLearningResult }>();
-  constructor(snapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation" }) {
+  private pending = new Map<string, { role: Turn["role"]; text: string; complete?: boolean; played?: boolean; inputTurnId?: string; result?: VoiceLearningResult; missionReport?: MissionStateReport }>();
+  private mission?: MissionTracker;
+  /** `mission` enables the realtime mission validator; real mode ignores correction results (PRD 4.3). */
+  constructor(snapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation" }, private missionConfig?: MissionTrackerConfig) {
     const bounded = boundRecords(snapshot.turns, snapshot.corrections, 128 * 1024);
-    this.snapshot = { ...snapshot, turns: bounded.turns, corrections: bounded.corrections };
+    // The tracker sees the full restored order so events outside the storage window still complete a route.
+    if (missionConfig) this.mission = new MissionTracker(missionConfig, { turns: snapshot.turns, progress: snapshot.missionProgress });
+    const { missionProgress: _restored, ...rest } = snapshot;
+    this.snapshot = this.withMission({ ...rest, turns: bounded.turns, corrections: bounded.corrections });
     this.acknowledge(this.snapshot);
   }
   getSnapshot() { return this.snapshot; }
+  getMissionOutcome() { return this.mission?.getOutcome(); }
+  private withMission(snapshot: ConversationSnapshot): ConversationSnapshot {
+    const missionProgress = this.mission?.snapshot(snapshot.turns);
+    return missionProgress ? { ...snapshot, missionProgress } : snapshot;
+  }
   acknowledge(snapshot: ConversationSnapshot) { for (const turn of snapshot.turns) this.acknowledged.add(turn.requestId); }
   apply(event: VoiceEvent | { type: "played"; turnId: string }) {
     if (!("turnId" in event)) return;
@@ -41,8 +52,9 @@ export class VoiceLearningRecords {
     if (event.type === "input-complete") { entry.role = "user"; entry.complete = true; }
     if (event.type === "response-complete") { entry.complete = true; if (event.inputTurnId) entry.inputTurnId = event.inputTurnId; }
     if (event.type === "played") entry.played = true;
-    if (event.type === "learning-cancelled") { entry.result = undefined; entry.inputTurnId = undefined; }
-    if (event.type === "learning-result") { entry.inputTurnId = event.inputTurnId; entry.result = event.result; }
+    if (event.type === "learning-cancelled") { entry.result = undefined; entry.missionReport = undefined; entry.inputTurnId = undefined; }
+    if (event.type === "learning-result" && this.missionConfig?.missionMode !== "real") { entry.inputTurnId = event.inputTurnId; entry.result = event.result; }
+    if (event.type === "mission-report" && this.mission) { entry.inputTurnId = event.inputTurnId; entry.missionReport = event.report; }
     this.pending.set(event.turnId, entry);
     while (this.pending.size > 100) this.pending.delete(this.pending.keys().next().value!);
     if (!entry.text.trim() || !entry.complete || (entry.role === "assistant" && !entry.played)) return;
@@ -62,8 +74,12 @@ export class VoiceLearningRecords {
           replacement: result.replacement!, explanation: result.explanation ?? "", attempts: [] } satisfies Correction);
       }
     }
+    if (this.mission) {
+      this.mission.confirmTurn(turn);
+      if (turn.role === "assistant") this.mission.commit(turn.turnId, entry.inputTurnId, entry.missionReport);
+    }
     const bounded = boundRecords([...this.snapshot.turns, turn], corrections, 128 * 1024);
-    this.snapshot = { turns: bounded.turns, corrections: bounded.corrections, learningState, hasConversationGaps: this.snapshot.hasConversationGaps === true || bounded.removed.some(id => !this.acknowledged.has(id)) };
+    this.snapshot = this.withMission({ turns: bounded.turns, corrections: bounded.corrections, learningState, hasConversationGaps: this.snapshot.hasConversationGaps === true || bounded.removed.some(id => !this.acknowledged.has(id)) });
     const live = new Set(this.snapshot.turns.map(t => t.requestId));
     this.acknowledged = new Set([...this.acknowledged].filter(id => live.has(id)));
     this.pending.delete(event.turnId);

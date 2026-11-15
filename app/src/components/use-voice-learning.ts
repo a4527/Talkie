@@ -110,7 +110,9 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
       if (runtime.current !== current) {
         await requestLearningAction({ action: "pause", learningSessionId: session.learningSessionId, learningConnectionToken: session.learningConnectionToken }); return;
       }
-      const value: Persistence = { store: new VoiceLearningStore(session), records: new VoiceLearningRecords(session.conversationSnapshot), busy: false };
+      const mission = session.mission ?? undefined;
+      const value: Persistence = { store: new VoiceLearningStore(session), busy: false,
+        records: new VoiceLearningRecords(session.conversationSnapshot, mission ? { missionMode: mission.missionMode, routeIds: mission.routeIds } : undefined) };
       current.persistence = value; persistence.current = value;
       setSnapshot(value.records.getSnapshot());
       setTranscript(value.records.getSnapshot().turns.map(t => ({ turnId: t.turnId, role: t.role, text: t.text, delivery: "played" })));
@@ -129,8 +131,8 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
         value.records.apply(event); setSnapshot(value.records.getSnapshot());
       });
       current.port = createVoicePort(route === "cascade"
-        ? { provider: "cascade", providers: createBrowserCascadeProviders(data.temporarySttKey, data.cascadeRequestToken, session), learning: true }
-        : { provider: "gemini-live", credential: { voiceConnectionToken: data.voiceConnectionToken, learning: true } }, event => {
+        ? { provider: "cascade", providers: createBrowserCascadeProviders(data.temporarySttKey, data.cascadeRequestToken, session), learning: true, missionMode: mission?.missionMode }
+        : { provider: "gemini-live", credential: { voiceConnectionToken: data.voiceConnectionToken, learning: true, missionMode: mission?.missionMode } }, event => {
         if (runtime.current !== current) return;
         value.records.apply(event); setSnapshot(value.records.getSnapshot());
         if (event.type === "connected") { setPhase("live"); setStatusMessage("듣고 있어요 · 편하게 영어로 말해 보세요."); }

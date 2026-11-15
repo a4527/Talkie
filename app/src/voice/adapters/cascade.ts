@@ -4,6 +4,8 @@ import { parseVoiceLearningResult, VoiceLearningRecords } from "../learning";
 import type { VoiceEvent, VoiceListener, VoicePort } from "../port";
 import type { PriorLearningContext } from "../prior-learning";
 import { createTutorInstruction } from "../tutor-prompt";
+import { parseMissionStateReport } from "../../mission/realtime";
+import type { MissionMode } from "../../mission/definitions";
 import type { CascadeProviders, RecognitionEvent, SpeechChunk } from "../cascade/providers";
 
 type Output = { turnId: string; abort: AbortController; complete: boolean; timer: ReturnType<typeof setTimeout> };
@@ -19,7 +21,7 @@ export class CascadeAdapter implements VoicePort {
   private seen = new Set<string>();
   private output?: Output;
   constructor(private providers: CascadeProviders, private emit: VoiceListener,
-    private options: { learning?: boolean; connectTimeoutMs?: number; responseTimeoutMs?: number } = {}) {}
+    private options: { learning?: boolean; missionMode?: MissionMode; connectTimeoutMs?: number; responseTimeoutMs?: number } = {}) {}
 
   async connect(context?: ConversationSnapshot, prior?: PriorLearningContext) {
     if (this.state !== "idle") throw new Error("VOICE_CONNECTION_STATE");
@@ -86,9 +88,11 @@ export class CascadeAdapter implements VoicePort {
       if (typeof reply.text !== "string" || !reply.text.trim() || reply.text.length > 6000) throw new Error("INVALID_REPLY");
       const result = reply.learningResult === undefined ? undefined : parseVoiceLearningResult(reply.learningResult);
       if (reply.learningResult !== undefined && !result) throw new Error("INVALID_RESULT");
+      const report = this.options.missionMode && reply.missionReport !== undefined ? parseMissionStateReport(reply.missionReport) : undefined;
       this.dispatch({ type: "transcript", role: "assistant", turnId: output.turnId, text: reply.text });
       if (!this.live(output)) return;
-      if (this.options.learning && result) this.dispatch({ type: "learning-result", turnId: output.turnId, inputTurnId, result });
+      if (this.options.learning && result && this.options.missionMode !== "real") this.dispatch({ type: "learning-result", turnId: output.turnId, inputTurnId, result });
+      if (report) this.dispatch({ type: "mission-report", turnId: output.turnId, inputTurnId, report });
       if (!this.live(output)) return;
       let seconds = 0;
       for await (const chunk of this.providers.tts.synthesize(reply.text, output.abort.signal)) {

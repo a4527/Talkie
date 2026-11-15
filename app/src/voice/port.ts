@@ -1,6 +1,7 @@
 import type { PriorLearningContext } from "./prior-learning";
 import type { VoiceLearningResult } from "./learning";
 import type { ConversationSnapshot } from "../learning/types";
+import type { MissionStateReport } from "../mission/realtime";
 /** App-owned contract: provider payloads, credentials and browser devices stay outside learning code. */
 export type VoiceEvent =
   | { type: "connected" }
@@ -9,6 +10,7 @@ export type VoiceEvent =
   | { type: "learning-cancelled"; turnId: string }
   | { type: "input-complete"; turnId: string }
   | { type: "learning-result"; turnId: string; inputTurnId: string; result: VoiceLearningResult }
+  | { type: "mission-report"; turnId: string; inputTurnId: string; report: MissionStateReport }
   | { type: "response-complete"; turnId: string; inputTurnId?: string }
   | { type: "interrupted"; turnId: string }
   | { type: "closed" }

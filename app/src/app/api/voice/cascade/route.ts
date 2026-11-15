@@ -11,24 +11,24 @@ export async function POST(request: NextRequest) {
     const input = await readJsonBody(request);
     if (input.testOnly !== true) throw new AppError("VOICE_TEST_ACK_REQUIRED", 403);
     const token = request.cookies.get(LOGIN_SESSION_COOKIE_NAME)?.value;
-    let prior;
+    let prior, mission;
     let userId: string;
     if (input.learningSessionId !== undefined) {
       const linked = await getVoiceLearningContext(token, requireString(input.learningSessionId), requireString(input.learningConnectionToken));
-      prior = linked.priorLearningContext; userId = linked.userId;
+      prior = linked.priorLearningContext; userId = linked.userId; mission = linked.mission;
     } else userId = await withIdentity(token, async (_tx, who) => who.userId);
     const learningSessionId = typeof input.learningSessionId === "string" ? input.learningSessionId : undefined;
     if (input.action === "credential") {
       const selection = parseCascadeSelection(input.selection);
       if (!selection) throw new AppError("INVALID_REQUEST");
-      return jsonResponse({ ...await issueCascadeCredential(userId, fetch, learningSessionId, selection), priorLearningContext: prior }, token);
+      return jsonResponse({ ...await issueCascadeCredential(userId, fetch, learningSessionId, selection), priorLearningContext: prior, ...(mission ? { missionMode: mission.missionMode } : {}) }, token);
     }
     if (input.action === "text") {
       const release = authorizeCascadeRequest(input.cascadeRequestToken, userId, "text", learningSessionId);
       try { const context = validateConversationSnapshot(input.context);
         if (context.turns.length === 0 || context.turns.at(-1)?.role !== "user") throw new AppError("INVALID_REQUEST");
         if (context.turns.length > 20 || new TextEncoder().encode(context.turns.map(turn => turn.text).join("")).length > 20 * 1024) throw new AppError("INVALID_REQUEST");
-        const result = await cascadeText(context, prior, learningSessionId !== undefined, request.signal);
+        const result = await cascadeText(context, prior, learningSessionId !== undefined, request.signal, fetch, undefined, mission);
         recordCascadeReply(input.cascadeRequestToken, userId, learningSessionId, result.text);
         return jsonResponse(result, token);
       } finally { release(); }

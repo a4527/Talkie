@@ -4,8 +4,11 @@ import type { ConversationSnapshot } from "../../learning/types";
 import { parseVoiceLearningResult } from "../learning";
 import type { VoiceListener, VoicePort } from "../port";
 import { createGeminiLiveSetup } from "../gemini-live-setup";
+import { MISSION_STATE_TOOL_NAME, parseMissionStateReport } from "../../mission/realtime";
+import type { MissionMode } from "../../mission/definitions";
 
-export type GeminiLiveCredential = { voiceConnectionToken: string; learning?: boolean };
+/** `missionMode` selects mission tools; the mission instruction itself is locked in the token on the server. */
+export type GeminiLiveCredential = { voiceConnectionToken: string; learning?: boolean; missionMode?: MissionMode };
 const endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained";
 
 /** Direct browser transport. A cascade or remote-server adapter can implement VoicePort separately. */
@@ -31,9 +34,10 @@ export class GeminiLiveAdapter implements VoicePort {
       this.timer = setTimeout(() => this.fail("timeout"), 15_000);
       try {
         const socket = this.createSocket(`${endpoint}?access_token=${encodeURIComponent(this.credential.voiceConnectionToken)}`);
-        this.credential = { voiceConnectionToken: "", learning: this.credential.learning };
+        const { learning, missionMode } = this.credential;
+        this.credential = { voiceConnectionToken: "", learning, missionMode };
         this.socket = socket;
-        socket.onopen = () => { if (!this.stopped) socket.send(JSON.stringify({ setup: createGeminiLiveSetup(this.credential.learning) })); };
+        socket.onopen = () => { if (!this.stopped) socket.send(JSON.stringify({ setup: createGeminiLiveSetup(learning, missionMode ? { missionMode } : undefined) })); };
         socket.onmessage = event => {
           // Blob decoding is asynchronous; serialize it so interruption cannot overtake earlier audio.
           this.queue = this.queue.then(async () => {
@@ -83,14 +87,16 @@ export class GeminiLiveAdapter implements VoicePort {
       if (turnId) this.emit({ type: "learning-cancelled", turnId });
     }
     for (const call of (message.toolCall?.functionCalls ?? []).slice(0, 16)) {
-      const result = call.name === "record_learning_result" ? parseVoiceLearningResult(call.args) : undefined;
-      if (result && this.inputTurnId && !this.toolTurns.has(call.id)) {
+      const result = call.name === "record_learning_result" && this.credential.missionMode !== "real" ? parseVoiceLearningResult(call.args) : undefined;
+      const report = call.name === MISSION_STATE_TOOL_NAME && this.credential.missionMode ? parseMissionStateReport(call.args) : undefined;
+      if ((result || report) && this.inputTurnId && !this.toolTurns.has(call.id)) {
         this.outputTurnId ||= crypto.randomUUID();
         if (this.toolTurns.size >= 200) { this.fail("protocol"); return; }
         this.toolTurns.set(call.id, this.outputTurnId);
-        this.emit({ type: "learning-result", turnId: this.outputTurnId, inputTurnId: this.inputTurnId, result });
+        if (result) this.emit({ type: "learning-result", turnId: this.outputTurnId, inputTurnId: this.inputTurnId, result });
+        if (report) this.emit({ type: "mission-report", turnId: this.outputTurnId, inputTurnId: this.inputTurnId, report });
       }
-      this.socket?.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: { accepted: Boolean(result && this.inputTurnId) } }] } }));
+      this.socket?.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: { accepted: Boolean((result || report) && this.inputTurnId) } }] } }));
     }
     if (!content) return;
     if (content.interrupted) {

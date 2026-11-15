@@ -10,7 +10,7 @@ import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
 import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions } from "./db/records-schema";
-import { currentMission, findMissionDefinition, toPublicMission, type MissionStartRequest, type PublicMission } from "../mission/definitions";
+import { currentMission, findMissionDefinition, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
 import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
@@ -342,6 +342,11 @@ export async function getVoiceLearningContext(loginSessionToken: string | undefi
         eq(learningSessions.demoScenario, "voice"), eq(learningSessions.learningSessionStatus, "ended"), eq(learningSessions.noteGenerationStatus, "ready"),
         lte(learningSessionNotes.learningEndDateKst, window.toDateKst),
         sql`${learningSessionNotes.learningSessionId} <> ${learningSessionId}`, sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`));
-    return { userId: who.userId, priorLearningContext: selectPriorLearningContext(notes, difficultyNotes) };
+    // Fixed mission for the server-built realtime instruction; partner knowledge never leaves the server.
+    const [missionRow] = await tx.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, learningSessionId));
+    const definition = missionRow ? findMissionDefinition(missionRow.missionId, missionRow.definitionVersion) : undefined;
+    if (missionRow && !definition) throw new AppError("MISSION_UNAVAILABLE", 409);
+    const mission = missionRow && definition ? { definition, missionMode: missionRow.missionMode as MissionMode, languageLevel: missionRow.languageLevel as LanguageLevel } : undefined;
+    return { userId: who.userId, priorLearningContext: selectPriorLearningContext(notes, difficultyNotes), ...(mission ? { mission } : {}) };
   });
 }

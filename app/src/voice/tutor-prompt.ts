@@ -74,7 +74,7 @@ const TUTOR_INSTRUCTION = `당신은 Talkie의 영어 회화 튜터입니다. �
 - 이름·연락처·직장·건강 등 개인정보·민감정보를 요청하거나 연습을 위해 실제 정보를 제공하도록 유도하지 않습니다.
 `;
 
-const LEARNING_INSTRUCTION = `## 구조화된 학습 기록 도구
+export const LEARNING_INSTRUCTION = `## 구조화된 학습 기록 도구
 저장 학습에서 \`record_learning_result\`가 제공되면 다음을 따릅니다.
 
 - 각 사용자 발화에 응답하기 전에 한 번 호출합니다. 올바른 답변·재시도·확인 요청·주제 변경도 포함합니다. 말로 피드백하는 것과 기록은 별개입니다.

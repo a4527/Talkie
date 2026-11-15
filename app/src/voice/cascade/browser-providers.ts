@@ -2,9 +2,11 @@ import { SonioxRecognizer } from "./soniox";
 import type { CascadeProviders } from "./providers";
 
 export function createBrowserCascadeProviders(temporarySttKey: string, cascadeRequestToken: string, session?: { learningSessionId: string; learningConnectionToken: string }): CascadeProviders {
+  // Only the session identity; the stored snapshot and mission view stay out of provider requests.
+  const identity = session && { learningSessionId: session.learningSessionId, learningConnectionToken: session.learningConnectionToken };
   async function call(action: "text" | "speech", value: object, signal: AbortSignal) {
     const response = await fetch("/api/voice/cascade", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ testOnly: true, action, cascadeRequestToken, ...session, ...value }), signal });
+      body: JSON.stringify({ testOnly: true, action, cascadeRequestToken, ...identity, ...value }), signal });
     if (!response.ok) throw new Error("VOICE_PROVIDER_UNAVAILABLE");
     return response;
   }

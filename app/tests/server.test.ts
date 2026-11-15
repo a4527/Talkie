@@ -328,7 +328,7 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       const started = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B2" });
       assert.equal(started.demoScenario, "voice");
       assert.deepEqual({ ...started.mission, goals: undefined, title: undefined, situation: undefined, learnerRole: undefined, partnerRole: undefined },
-        { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B2", goals: undefined, title: undefined, situation: undefined, learnerRole: undefined, partnerRole: undefined });
+        { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B2", goals: undefined, title: undefined, situation: undefined, learnerRole: undefined, partnerRole: undefined, routeIds: ["remake", "refund"] });
       assert.ok(!JSON.stringify(started.mission).includes("A different staff member"), "Partner knowledge must not reach the browser");
       await assert.rejects(startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "A1" }), /ALREADY_CONNECTED/);
       await updateLearningHeartbeat(raw, started.learningSessionId, started.learningConnectionToken, true);
@@ -336,6 +336,9 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       const resumed = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "A1" });
       assert.equal(resumed.learningSessionId, started.learningSessionId);
       assert.equal(resumed.mission?.missionMode, "real"); assert.equal(resumed.mission?.languageLevel, "B2");
+      // The realtime connection reads the fixed definition on the server (partner knowledge stays server-side).
+      const voiceContext = await getVoiceLearningContext(raw, resumed.learningSessionId, resumed.learningConnectionToken);
+      assert.deepEqual([voiceContext.mission?.definition.missionId, voiceContext.mission?.definition.definitionVersion, voiceContext.mission?.missionMode, voiceContext.mission?.languageLevel], ["cafe-wrong-order", 1, "real", "B2"]);
       await updateLearningHeartbeat(raw, resumed.learningSessionId, resumed.learningConnectionToken, true);
       await assert.rejects(startLearning(raw, "voice"), /LEARNING_MODE_CONFLICT/, "A free voice start must not resume a mission");
       const [stored] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, started.learningSessionId));
@@ -344,6 +347,7 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.deepEqual(listed, { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B2", missionEndReason: null, finalRouteId: null });
       // A free voice session stays free: a mission start must not convert it.
       const free = await startLearning(other, "voice");
+      assert.equal((await getVoiceLearningContext(other, free.learningSessionId, free.learningConnectionToken)).mission, undefined);
       await updateLearningHeartbeat(other, free.learningSessionId, free.learningConnectionToken, true);
       await assert.rejects(startLearning(other, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "B1" }), /LEARNING_MODE_CONFLICT/);
       assert.equal(free.mission, null);
