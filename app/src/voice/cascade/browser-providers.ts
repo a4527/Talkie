@@ -11,7 +11,7 @@ export function createBrowserCascadeProviders(temporarySttKey: string, cascadeRe
     return response;
   }
   return { stt: new SonioxRecognizer(temporarySttKey),
-    llm: { async respond(value, signal) { return (await call("text", { context: value.context }, signal)).json(); } },
+    llm: { async respond(value, signal) { return (await call("text", { context: value.context, ...(value.closing ? { closing: value.closing } : {}) }, signal)).json(); } },
     tts: { async *synthesize(text, signal) {
       const response = await call("speech", { text }, signal);
       const bytes = new Uint8Array(await response.arrayBuffer());

@@ -15,6 +15,8 @@ export type CascadeRequest = {
   instruction: string;
   context: ConversationSnapshot;
   priorLearningContext?: PriorLearningContext;
+  /** Asks for the partner's closing line instead of a normal reply (real mission without progress). */
+  closing?: "no_progress";
 };
 export interface TextResponder {
   // Stateless: every request contains only app-confirmed history. No hidden provider conversation.

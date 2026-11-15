@@ -37,6 +37,7 @@ export class VoiceLearningRecords {
   }
   getSnapshot() { return this.snapshot; }
   getMissionOutcome() { return this.mission?.getOutcome(); }
+  previewMissionEnding(inputTurnId: string, report: MissionStateReport) { return this.mission?.previewEnding(inputTurnId, report); }
   private withMission(snapshot: ConversationSnapshot): ConversationSnapshot {
     const missionProgress = this.mission?.snapshot(snapshot.turns);
     return missionProgress ? { ...snapshot, missionProgress } : snapshot;

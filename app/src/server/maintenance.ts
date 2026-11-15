@@ -5,7 +5,7 @@ import { databases, type RecordsDatabase } from "./db";
 import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, learningSessions, learningSessionNotes, users } from "./db/records-schema";
 import { transcriptSessionStates } from "./db/transcripts-schema";
 import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
-import { finalizeLearningNote, needsVoiceExtraction, extractVoiceNote, type NoteDeps } from "./learning";
+import { finalizeLearningNote, needsVoiceExtraction, extractVoiceNote, recordMissionEnd, type NoteDeps } from "./learning";
 
 export async function maintenance(deps: NoteDeps = {}) {
   const db = databases();
@@ -39,10 +39,12 @@ export async function maintenance(deps: NoteDeps = {}) {
             const transcriptDeleteDeadlineAt = new Date(now.getTime() + DAY);
             await tx.update(learningSessions).set({ learningSessionStatus: "ended", learningSessionEndedAt: now, transcriptDeleteDeadlineAt, noteGenerationStatus: "pending", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));
             row = { ...row, learningSessionStatus: "ended", learningSessionEndedAt: now, transcriptDeleteDeadlineAt, noteGenerationStatus: "pending", learningConnectionTokenHash: null };
+            await recordMissionEnd(tx, row, "resume_expired");
           }
           const [job] = await tx.select().from(scheduledJobs).where(and(eq(scheduledJobs.targetLearningSessionId, row.learningSessionId), eq(scheduledJobs.jobType, "note")));
           if (row.learningSessionEndedAt && (row.noteGenerationStatus !== "waiting_save" || (row.transcriptDeleteDeadlineAt && row.transcriptDeleteDeadlineAt <= now) ||
             (job && job.scheduledRunAt <= now && (!row.learningConnectionExpiresAt || row.learningConnectionExpiresAt <= now)))) {
+            await recordMissionEnd(tx, row, "user_ended"); // No-op when already recorded (e.g. resume_expired above).
             if (needsVoiceExtraction(row, now)) voiceDue.push(row.learningSessionId); // model call runs after this transaction, without locks
             else {
               await finalizeLearningNote(tx, row);

@@ -28,7 +28,8 @@ export async function POST(request: NextRequest) {
       try { const context = validateConversationSnapshot(input.context);
         if (context.turns.length === 0 || context.turns.at(-1)?.role !== "user") throw new AppError("INVALID_REQUEST");
         if (context.turns.length > 20 || new TextEncoder().encode(context.turns.map(turn => turn.text).join("")).length > 20 * 1024) throw new AppError("INVALID_REQUEST");
-        const result = await cascadeText(context, prior, learningSessionId !== undefined, request.signal, fetch, undefined, mission);
+        if (input.closing !== undefined && input.closing !== "no_progress") throw new AppError("INVALID_REQUEST");
+        const result = await cascadeText(context, prior, learningSessionId !== undefined, request.signal, fetch, undefined, mission, input.closing);
         recordCascadeReply(input.cascadeRequestToken, userId, learningSessionId, result.text);
         return jsonResponse(result, token);
       } finally { release(); }

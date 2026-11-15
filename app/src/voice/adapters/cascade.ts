@@ -4,7 +4,7 @@ import { parseVoiceLearningResult, VoiceLearningRecords } from "../learning";
 import type { VoiceEvent, VoiceListener, VoicePort } from "../port";
 import type { PriorLearningContext } from "../prior-learning";
 import { createTutorInstruction } from "../tutor-prompt";
-import { parseMissionStateReport } from "../../mission/realtime";
+import { parseMissionStateReport, type MissionEndingAdvisor } from "../../mission/realtime";
 import type { MissionMode } from "../../mission/definitions";
 import type { CascadeProviders, RecognitionEvent, SpeechChunk } from "../cascade/providers";
 
@@ -21,7 +21,7 @@ export class CascadeAdapter implements VoicePort {
   private seen = new Set<string>();
   private output?: Output;
   constructor(private providers: CascadeProviders, private emit: VoiceListener,
-    private options: { learning?: boolean; missionMode?: MissionMode; connectTimeoutMs?: number; responseTimeoutMs?: number } = {}) {}
+    private options: { learning?: boolean; missionMode?: MissionMode; missionAdvisor?: MissionEndingAdvisor; connectTimeoutMs?: number; responseTimeoutMs?: number } = {}) {}
 
   async connect(context?: ConversationSnapshot, prior?: PriorLearningContext) {
     if (this.state !== "idle") throw new Error("VOICE_CONNECTION_STATE");
@@ -82,13 +82,20 @@ export class CascadeAdapter implements VoicePort {
   private live(output: Output) { return this.state === "ready" && this.output === output && !output.abort.signal.aborted; }
   private async respond(output: Output, inputTurnId: string) {
     try {
-      const reply = await this.providers.llm.respond({ instruction: createTutorInstruction(this.options.learning === true),
-        context: selectVoiceContext(this.records.getSnapshot()), priorLearningContext: this.prior ? structuredClone(this.prior) : undefined }, output.abort.signal);
+      const request = { instruction: createTutorInstruction(this.options.learning === true),
+        context: selectVoiceContext(this.records.getSnapshot()), priorLearningContext: this.prior ? structuredClone(this.prior) : undefined };
+      let reply = await this.providers.llm.respond(request, output.abort.signal);
       if (!this.live(output)) return;
       if (typeof reply.text !== "string" || !reply.text.trim() || reply.text.length > 6000) throw new Error("INVALID_REPLY");
       const result = reply.learningResult === undefined ? undefined : parseVoiceLearningResult(reply.learningResult);
       if (reply.learningResult !== undefined && !result) throw new Error("INVALID_RESULT");
       const report = this.options.missionMode && reply.missionReport !== undefined ? parseMissionStateReport(reply.missionReport) : undefined;
+      // A text reply cannot be redirected mid-generation, so the closing line is a second request (only at that end).
+      if (report && this.options.missionAdvisor?.(inputTurnId, report)) {
+        reply = { text: (await this.providers.llm.respond({ ...request, closing: "no_progress" }, output.abort.signal)).text };
+        if (!this.live(output)) return;
+        if (typeof reply.text !== "string" || !reply.text.trim() || reply.text.length > 6000) throw new Error("INVALID_REPLY");
+      }
       this.dispatch({ type: "transcript", role: "assistant", turnId: output.turnId, text: reply.text });
       if (!this.live(output)) return;
       if (this.options.learning && result && this.options.missionMode !== "real") this.dispatch({ type: "learning-result", turnId: output.turnId, inputTurnId, result });

@@ -4,7 +4,7 @@ import type { ConversationSnapshot } from "../../learning/types";
 import { parseVoiceLearningResult } from "../learning";
 import type { VoiceListener, VoicePort } from "../port";
 import { createGeminiLiveSetup } from "../gemini-live-setup";
-import { MISSION_STATE_TOOL_NAME, parseMissionStateReport } from "../../mission/realtime";
+import { MISSION_NO_PROGRESS_CLOSING, MISSION_STATE_TOOL_NAME, parseMissionStateReport, type MissionEndingAdvisor } from "../../mission/realtime";
 import type { MissionMode } from "../../mission/definitions";
 
 /** `missionMode` selects mission tools; the mission instruction itself is locked in the token on the server. */
@@ -25,7 +25,7 @@ export class GeminiLiveAdapter implements VoicePort {
   private timer?: ReturnType<typeof setTimeout>;
   private queue = Promise.resolve();
   constructor(private credential: GeminiLiveCredential, private emit: VoiceListener,
-    private createSocket: (url: string) => WebSocket = url => new WebSocket(url)) {}
+    private createSocket: (url: string) => WebSocket = url => new WebSocket(url), private missionAdvisor?: MissionEndingAdvisor) {}
 
   connect(context?: ConversationSnapshot, priorLearningContext?: PriorLearningContext): Promise<void> {
     if (this.socket || this.stopped) return Promise.reject(new Error("VOICE_CONNECTION_STATE"));
@@ -96,7 +96,11 @@ export class GeminiLiveAdapter implements VoicePort {
         if (result) this.emit({ type: "learning-result", turnId: this.outputTurnId, inputTurnId: this.inputTurnId, result });
         if (report) this.emit({ type: "mission-report", turnId: this.outputTurnId, inputTurnId: this.inputTurnId, report });
       }
-      this.socket?.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: { accepted: Boolean((result || report) && this.inputTurnId) } }] } }));
+      const accepted = Boolean((result || report) && this.inputTurnId);
+      // The reply that ends a real mission without progress becomes the partner's short closing line.
+      const ending = accepted && report ? this.missionAdvisor?.(this.inputTurnId, report) : undefined;
+      this.socket?.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name,
+        response: ending ? { accepted, missionEnding: ending, instruction: MISSION_NO_PROGRESS_CLOSING } : { accepted } }] } }));
     }
     if (!content) return;
     if (content.interrupted) {

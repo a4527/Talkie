@@ -5,12 +5,13 @@ import { buildVoiceNoteMarkdown } from "../voice/note";
 import { extractNote, NOTE_EXTRACTION_LIMITS, type ExtractionGenerate, type ExtractionRun } from "../voice/note-extraction";
 import { createGeminiExtractionGenerate } from "./voice-cascade";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
 import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions } from "./db/records-schema";
 import { currentMission, findMissionDefinition, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
+import { DEFAULT_NO_PROGRESS_THRESHOLD, findCompletedRoute } from "../mission/realtime";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
 import { deleteTranscriptSource, transcriptDeletionReason } from "./db/transcripts-lifecycle";
@@ -233,6 +234,29 @@ export async function endLearning(loginSessionToken: string | undefined, learnin
   });
 }
 
+/** Test value until the operational threshold is decided (PRD 4.2.2). */
+export const MISSION_NO_PROGRESS_THRESHOLD = DEFAULT_NO_PROGRESS_THRESHOLD;
+/**
+ * Records a mission session's end reason and final route once, after saves can no longer change
+ * (note phase or automatic close). The reason is derived from confirmed progress with the same
+ * validator as the browser, never from a client claim: a verified route completion wins, then a
+ * verified real-mode no-progress streak, otherwise `fallback`.
+ */
+export async function recordMissionEnd(tx: RecordsTransaction, row: LearningRow, fallback: "user_ended" | "resume_expired") {
+  if (!row.learningSessionEndedAt) return;
+  const [mission] = await tx.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, row.learningSessionId)).for("update");
+  if (!mission || mission.missionEndReason) return;
+  let snapshot: ConversationSnapshot | undefined;
+  try { snapshot = row.confirmedSaveSequenceNumber > 0 ? await readConfirmed(row) : undefined; } catch { snapshot = undefined; } // Deleted or missing source: no verified progress.
+  const order = new Map(snapshot?.turns.map((t, i) => [t.turnId, i]) ?? []);
+  const routes = new Set(findMissionDefinition(mission.missionId, mission.definitionVersion)?.routes.map(r => r.routeId) ?? []);
+  const finalRouteId = findCompletedRoute((snapshot?.missionProgress?.routeEvents ?? []).filter(e => routes.has(e.routeId)), id => order.get(id)) ?? null;
+  const noProgress = snapshot?.missionProgress?.noProgress;
+  const missionEndReason = finalRouteId ? "goal_completed"
+    : mission.missionMode === "real" && noProgress && noProgress.count >= MISSION_NO_PROGRESS_THRESHOLD && noProgress.evidenceTurnIds.every(id => order.has(id)) ? "no_progress_failed" : fallback;
+  await tx.update(learningSessionMissions).set({ missionEndReason, finalRouteId }).where(and(eq(learningSessionMissions.learningSessionId, row.learningSessionId), isNull(learningSessionMissions.missionEndReason)));
+}
+
 // Deliberately small synthetic summary; actual AI selection is still B-09/B-06 work.
 function buildDemoNoteMarkdown(conversationSnapshot: ConversationSnapshot, learningSessionEndedAt: Date) {
   const userTurns = conversationSnapshot.turns.filter(t => t.role === "user");
@@ -287,6 +311,7 @@ export async function completeLearningNote(loginSessionToken: string | undefined
   // 1) Short transaction: settle what needs no model, or capture the row for extraction.
   const pending = await withIdentity(loginSessionToken, async (tx, who) => {
     const row = await requireOwnedLearningSession(tx, who, learningSessionId);
+    await recordMissionEnd(tx, row, "user_ended");
     if (needsVoiceExtraction(row, await dbNow(tx))) return row;
     await finalizeLearningNote(tx, row);
     return null;

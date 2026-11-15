@@ -396,6 +396,55 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       }
     }
   });
+  it("records the mission end reason once from confirmed progress, not from the client", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    const failing: ExtractionGenerate = async () => { throw new Error("synthetic extraction outage"); };
+    const turns = [{ turnId: "a0", requestId: "a0", role: "assistant", text: "Hi, how can I help?" }, { turnId: "u1", requestId: "u1", role: "user", text: "My latte is wrong." },
+      { turnId: "a1", requestId: "u1", role: "assistant", text: "I can remake it as a hot decaf in five minutes." }, { turnId: "u2", requestId: "u2", role: "user", text: "Yes, please." },
+      { turnId: "a2", requestId: "u2", role: "assistant", text: "Great, I'll remake it now." }];
+    const ev = (kind: string, turn: string) => ({ eventId: `${kind}-${turn}`, kind, routeId: "remake", evidenceTurnId: turn });
+    const ended = async (email: string, missionMode: "practice" | "real", missionProgress: unknown) => {
+      const raw = await login(email), s = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode, languageLevel: "B1" });
+      if (missionProgress !== null) await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns, missionProgress });
+      await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+      // Reason is recorded before any model call; an empty session settles without one.
+      await completeLearningNote(raw, s.learningSessionId, { generate: failing }).catch(error => assert.match(String(error), /NOTE_PENDING/));
+      const [row] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, s.learningSessionId));
+      return { raw, s, row };
+    };
+    try {
+      const done = await ended("done@example.test", "real", { routeEvents: [ev("proposed", "a1"), ev("user_accepted", "u2"), ev("staff_confirmed", "a2")], noProgress: { count: 0, evidenceTurnIds: [] } });
+      assert.deepEqual([done.row.missionEndReason, done.row.finalRouteId], ["goal_completed", "remake"]);
+      // Written once: a later note run does not change it.
+      await databases().records.update(learningSessionMissions).set({ finalRouteId: "refund" }).where(eq(learningSessionMissions.learningSessionId, done.s.learningSessionId));
+      await assert.rejects(completeLearningNote(done.raw, done.s.learningSessionId, { generate: failing }), /NOTE_PENDING/);
+      const [again] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, done.s.learningSessionId));
+      assert.equal(again.finalRouteId, "refund");
+      const wrongOrder = await ended("order@example.test", "real", { routeEvents: [ev("user_accepted", "u1"), ev("proposed", "a1"), ev("staff_confirmed", "a2")], noProgress: { count: 0, evidenceTurnIds: [] } });
+      assert.deepEqual([wrongOrder.row.missionEndReason, wrongOrder.row.finalRouteId], ["user_ended", null], "Out-of-order events are not a completion");
+      const failed = await ended("stuck@example.test", "real", { routeEvents: [], noProgress: { count: 3, evidenceTurnIds: ["u1", "u2", "a2"] } });
+      assert.deepEqual([failed.row.missionEndReason, failed.row.finalRouteId], ["no_progress_failed", null]);
+      const short = await ended("short@example.test", "real", { routeEvents: [], noProgress: { count: 2, evidenceTurnIds: ["u1", "u2"] } });
+      assert.equal(short.row.missionEndReason, "user_ended");
+      const practice = await ended("practice@example.test", "practice", { routeEvents: [], noProgress: { count: 3, evidenceTurnIds: ["u1", "u2", "a2"] } });
+      assert.equal(practice.row.missionEndReason, "user_ended", "Practice never fails for no progress");
+      const empty = await ended("empty@example.test", "real", null);
+      assert.equal(empty.row.missionEndReason, "user_ended");
+      // Automatic close after 24 hours of interruption.
+      const idle = await login("idle@example.test"), s = await startLearning(idle, "voice", { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" });
+      await saveLearning(idle, s.learningSessionId, s.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns, missionProgress: { routeEvents: [ev("proposed", "a1")], noProgress: { count: 0, evidenceTurnIds: [] } } });
+      await databases().records.update(learningSessions).set({ learningSessionStatus: "interrupted", learningSessionInterruptedAt: new Date(Date.now() - 86_400_001) }).where(eq(learningSessions.learningSessionId, s.learningSessionId));
+      await maintenance({ generate: failing });
+      const [expired] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, s.learningSessionId));
+      assert.deepEqual([expired.missionEndReason, expired.finalRouteId], ["resume_expired", null]);
+      assert.equal((await listLearningRecords(idle)).sessions[0].mission?.missionEndReason, "resume_expired");
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
   it("reads retained difficulty outside the review window and keeps topic context isolated", async () => {
     const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
     process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";

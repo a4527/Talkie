@@ -117,6 +117,8 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
       setSnapshot(value.records.getSnapshot());
       setTranscript(value.records.getSnapshot().turns.map(t => ({ turnId: t.turnId, role: t.role, text: t.text, delivery: "played" })));
       value.timer = setInterval(() => void sync(value), 5000);
+      // A resumed mission whose outcome was already confirmed must not continue the conversation.
+      if (value.records.getMissionOutcome()) { stop("end"); setStatusMessage("이미 끝난 미션이라 결과와 노트를 정리하고 있어요."); return; }
       const data = route === "cascade" ? await (async () => {
         const response = await fetch("/api/voice/cascade", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
           body: JSON.stringify({ action: "credential", testOnly: true, selection: cascadeSelection, ...session }) });
@@ -129,6 +131,12 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
         const event = { type: "played" as const, turnId };
         setTranscript(previous => updateVoiceTranscriptTurns(previous, event));
         value.records.apply(event); setSnapshot(value.records.getSnapshot());
+        // A verified mission outcome ends after its last line has played; the server re-derives the reason.
+        const outcome = value.records.getMissionOutcome();
+        if (outcome) {
+          stop("end");
+          setStatusMessage(outcome.reason === "goal_completed" ? "미션을 완료했어요. 결과와 노트를 정리하고 있어요." : "대화가 더 진행되지 않아 실전 미션을 마쳤어요. 결과와 노트를 정리하고 있어요.");
+        }
       });
       current.port = createVoicePort(route === "cascade"
         ? { provider: "cascade", providers: createBrowserCascadeProviders(data.temporarySttKey, data.cascadeRequestToken, session), learning: true, missionMode: mission?.missionMode }
@@ -140,7 +148,7 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
         try { current.playback?.handle(event); } catch { stop(); setStatusMessage("재생이 지연되어 연결을 멈췄어요. 이어서 할 수 있어요."); }
         if (event.type === "error") { setStatusMessage(event.code === "billing" ? "Soniox 계정의 결제·크레딧 상태 때문에 전사를 시작하지 못했습니다." : "음성 연결에 실패했습니다. 키·무료 한도·네트워크 상태를 확인해 주세요."); stop(); }
         if (event.type === "closed") { setStatusMessage("음성 연결이 끊겼어요. 저장된 대화부터 이어서 할 수 있어요."); stop(); }
-      });
+      }, mission ? (inputTurnId, report) => value.records.previewMissionEnding(inputTurnId, report) : undefined);
       const seconds = Math.min(Number(data.testDurationSeconds) || 180, 180);
       setDeadline(Date.now() + seconds * 1000);
       current.timer = setTimeout(() => { stop(); setStatusMessage("이번 연결 시간이 끝났어요. 저장된 대화부터 이어서 할 수 있어요."); }, seconds * 1000);

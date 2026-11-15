@@ -183,3 +183,15 @@ it("factory accepts cascade without a token, ignores early/wrong acknowledgement
   expect(f.requests[0].context.turns.reduce((n, t) => n + new TextEncoder().encode(t.text).length, 0)).toBeLessThanOrEqual(20480);
   expect(events.some(e => e.type === "response-complete")).toBe(true); port.close();
 });
+
+it("replaces a mission-ending reply with a closing line from a second request", async () => {
+  const f = fixture({ missionMode: "real", missionAdvisor: () => "no_progress_failed" });
+  vi.mocked(f.providers.llm.respond).mockImplementation(async request => (request as CascadeRequest).closing
+    ? { text: "Okay, come back any time." } : { text: "Could you say that again?", missionReport: { routeEvents: [], progress: "no_progress" } });
+  await f.port.connect(); f.utterance("a", "Hmm."); await tick();
+  const calls = vi.mocked(f.providers.llm.respond).mock.calls;
+  expect(calls.map(([request]) => request.closing)).toEqual([undefined, "no_progress"]);
+  expect(f.events.filter(e => e.type === "transcript" && e.role === "assistant").map(e => (e as { text: string }).text)).toEqual(["Okay, come back any time."]);
+  expect(f.events.find(e => e.type === "mission-report")).toMatchObject({ report: { routeEvents: [], progress: "no_progress" } });
+  f.port.close();
+});

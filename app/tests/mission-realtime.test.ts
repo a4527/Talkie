@@ -233,3 +233,60 @@ describe("mission realtime providers", () => {
     expect(mission).toEqual({ missionMode: "practice", instruction: createMissionInstruction(definition, "practice", "A2") });
   });
 });
+
+describe("mission ending", () => {
+  it("previews a real-mode no-progress ending before the reply is spoken, and only then", () => {
+    const records = new VoiceLearningRecords(undefined, { missionMode: "real", ...routes, noProgressThreshold: 3 });
+    staffOpening(records);
+    exchange(records, 1, { routeEvents: [], progress: "no_progress" });
+    exchange(records, 2, { routeEvents: [], progress: "no_progress" });
+    const np = { routeEvents: [], progress: "no_progress" as const };
+    // The learner turn may not be confirmed yet when the provider asks (Gemini confirms input at turn completion).
+    expect(records.previewMissionEnding("u3", np)).toBe("no_progress_failed");
+    expect(records.previewMissionEnding("u3", { routeEvents: [], progress: "progress" })).toBeUndefined();
+    expect(records.previewMissionEnding("u3", { routeEvents: [ev("route_changed", "refund")], progress: "no_progress" })).toBeUndefined();
+    expect(records.previewMissionEnding("u2", np)).toBeUndefined(); // Already counted.
+    exchange(records, 3, np);
+    expect(records.getMissionOutcome()).toEqual({ reason: "no_progress_failed" });
+    expect(records.previewMissionEnding("u4", np)).toBeUndefined();
+    const practice = new VoiceLearningRecords(undefined, { missionMode: "practice", ...routes, noProgressThreshold: 1 });
+    staffOpening(practice);
+    expect(practice.previewMissionEnding("u1", np)).toBeUndefined();
+  });
+  it("does not preview failure when the same reply completes the route", () => {
+    const records = new VoiceLearningRecords(undefined, { missionMode: "real", ...routes, noProgressThreshold: 1 });
+    staffOpening(records);
+    exchange(records, 1, { routeEvents: [ev("proposed")], progress: "progress" });
+    records.apply({ type: "transcript", role: "user", turnId: "u2", text: "Yes" }); records.apply({ type: "input-complete", turnId: "u2" });
+    // Acceptance is learner-side progress, so no ending; a confirmation completing an earlier acceptance also wins.
+    expect(records.previewMissionEnding("u2", { routeEvents: [ev("user_accepted"), ev("staff_confirmed")], progress: "no_progress" })).toBeUndefined();
+    records.apply({ type: "mission-report", turnId: "a2", inputTurnId: "u2", report: { routeEvents: [ev("user_accepted")], progress: "progress" } });
+    records.apply({ type: "transcript", role: "assistant", turnId: "a2", text: "About five minutes, okay?" });
+    records.apply({ type: "response-complete", turnId: "a2", inputTurnId: "u2" }); records.apply({ type: "played", turnId: "a2" });
+    expect(records.previewMissionEnding("u3", { routeEvents: [], progress: "no_progress" })).toBe("no_progress_failed");
+    expect(records.previewMissionEnding("u3", { routeEvents: [ev("staff_confirmed")], progress: "no_progress" })).toBeUndefined();
+  });
+  it("tells Gemini to close in role when the reply ends the mission", async () => {
+    class Socket { onopen?: () => void; onmessage?: (e: { data: string }) => void; onclose?: () => void; onerror?: () => void; bufferedAmount = 0; sent: any[] = [];
+      send(v: string) { this.sent.push(JSON.parse(v)); } close() {} message(d: unknown) { this.onmessage?.({ data: JSON.stringify(d) }); } }
+    const socket = new Socket(), advisor = vi.fn(() => "no_progress_failed" as const);
+    const adapter = new GeminiLiveAdapter({ voiceConnectionToken: "auth_tokens/synthetic", learning: true, missionMode: "real" }, () => {}, () => socket as unknown as WebSocket, advisor);
+    const ready = adapter.connect(); socket.message({ setupComplete: {} }); await ready;
+    socket.message({ serverContent: { inputTranscription: { text: "Uh, okay." } } }); await new Promise(r => setTimeout(r, 0));
+    socket.message({ toolCall: { functionCalls: [{ id: "c1", name: "report_mission_state", args: { routeEvents: [], progress: "no_progress" } }] } }); await new Promise(r => setTimeout(r, 0));
+    const response = socket.sent.find(m => m.toolResponse).toolResponse.functionResponses[0].response;
+    expect(response).toMatchObject({ accepted: true, missionEnding: "no_progress_failed" });
+    expect(response.instruction).toContain("closing line");
+    expect(advisor).toHaveBeenCalledWith(expect.any(String), { routeEvents: [], progress: "no_progress" });
+    adapter.close();
+  });
+  it("asks the cascade server for a closing line only when the reply ends the mission", async () => {
+    vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000"); vi.stubEnv("TALKIE_VOICE_CASCADE_TEST", "enabled"); vi.stubEnv("SONIOX_API_KEY", "s"); vi.stubEnv("GOOGLE_API_KEY", "g");
+    const request = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ text: "No problem, come back any time.", missionReport: { progress: "progress" } }) }] } }] }));
+    const snapshot = { turns: [{ turnId: "u", requestId: "u", role: "user" as const, text: "Uh" }], corrections: [], learningState: "conversation" as const };
+    expect(await cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, { definition, missionMode: "real", languageLevel: "B1" }, "no_progress"))
+      .toEqual({ text: "No problem, come back any time.", learningResult: undefined });
+    expect(JSON.parse(JSON.parse(request.mock.calls[0][1]!.body as string).contents[0].parts[0].text).instruction).toContain("closing line");
+    await expect(cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, { definition, missionMode: "practice", languageLevel: "B1" }, "no_progress")).rejects.toThrow("INVALID_REQUEST");
+  });
+});

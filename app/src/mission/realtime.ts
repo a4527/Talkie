@@ -16,6 +16,11 @@ export interface MissionStateReport {
   /** Real mode only; ignored in practice. */
   progress?: MissionProgressSignal;
 }
+/** Sent to the realtime AI when the reply it is about to speak ends a real mission without progress. */
+export const MISSION_NO_PROGRESS_CLOSING = "The app is ending this mission now because the conversation is not moving forward. Stay in role and say one short, polite closing line, for example that the customer can come back to the counter any time. Do not ask a question, give a hint or correction, or mention scores or failure.";
+export type MissionEnding = "no_progress_failed";
+/** Lets a provider adapter ask, before speaking, whether a reply will end the mission (see MissionTracker.previewEnding). */
+export type MissionEndingAdvisor = (inputTurnId: string, report: MissionStateReport) => MissionEnding | undefined;
 export type MissionOutcome = { reason: "goal_completed"; routeId: string } | { reason: "no_progress_failed" };
 export interface MissionTrackerConfig { missionMode: MissionMode; routeIds: readonly string[]; noProgressThreshold?: number }
 
@@ -138,6 +143,23 @@ export class MissionTracker {
       this.noProgress = { count: this.noProgress.count + 1, evidenceTurnIds: [...this.noProgress.evidenceTurnIds, learner.turnId] };
       if (this.noProgress.count >= this.threshold) return this.outcome = { reason: "no_progress_failed" };
     } else this.noProgress = { count: 0, evidenceTurnIds: [] };
+  }
+  /**
+   * Before the reply is spoken: would committing this report end a real mission without progress?
+   * Mirrors `commit` with the learner turn either confirmed or about to be confirmed next. The final
+   * outcome is still decided only by `commit` after playback; a completion in the same report wins.
+   */
+  previewEnding(inputTurnId: string, report: MissionStateReport): MissionEnding | undefined {
+    if (this.outcome || this.config.missionMode !== "real" || report.progress !== "no_progress") return;
+    if (report.routeEvents.some(e => USER_EVIDENCE.includes(e.kind) && this.routes.has(e.routeId))) return;
+    const position = this.positions.get(inputTurnId);
+    if (position !== undefined && this.sequence[position].role !== "user") return;
+    const before = position === undefined ? this.sequence.at(-1) : this.sequence[position - 1];
+    if (before?.role !== "assistant" || this.noProgress.evidenceTurnIds.includes(inputTurnId)) return;
+    const reply = "\u0000reply", staff = report.routeEvents.filter(e => !USER_EVIDENCE.includes(e.kind) && this.routes.has(e.routeId))
+      .map(e => ({ eventId: `${e.kind}-preview`, kind: e.kind, routeId: e.routeId, evidenceTurnId: reply }));
+    if (findCompletedRoute([...this.events, ...staff], id => id === reply ? this.sequence.length + 1 : this.positions.get(id))) return;
+    return this.noProgress.count + 1 >= this.threshold ? "no_progress_failed" : undefined;
   }
   /** Progress restricted to evidence present in `turns` (the bounded storage window); undefined when empty. */
   snapshot(turns: readonly Turn[]): MissionProgress | undefined {
