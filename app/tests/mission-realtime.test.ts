@@ -189,7 +189,13 @@ describe("mission realtime providers", () => {
     expect(real).toContain("## 실전 모드"); expect(real).toContain("`no_progress`"); expect(real).not.toContain("record_learning_result");
     expect(practice).toContain("record_learning_result"); expect(practice).not.toContain("`no_progress`");
     // PRD 4.2.1: options only when the learner asks how or leaves the choice; never chosen for them (2026-11-16 provider check).
-    for (const text of [real, practice]) { expect(text).toContain("처리 방법·선택지를 먼저 꺼내지 않습니다"); expect(text).toContain("대신 고르지 않습니다"); }
+    for (const text of [real, practice]) { expect(text).toContain("처리 방법·선택지를 먼저 꺼내지 않습니다"); expect(text).toContain("대신 고르지 않습니다"); expect(text).toContain("학습자가 조건에 동의한 다음 응답에서 확정합니다"); }
+  });
+  it("makes the partner's speaking level concrete and keeps it from changing how much is solved for the learner", () => {
+    const a1 = createMissionInstruction(definition, "real", "A1"), c = createMissionInstruction(definition, "real", "C");
+    expect(a1).toContain("## 상대역 말하기 수준(A1)"); expect(a1).toContain("8단어 안팎"); expect(a1).toContain("조건은 붙이지 않습니다");
+    expect(c).not.toContain("8단어 안팎");
+    for (const text of [a1, c]) expect(text).toContain("대신 해결해 주는 정도나 학습자가 직접 해야 할 요청·선택은 바꾸지 않습니다");
   });
   it("emits mission reports from Gemini tool calls and ignores corrections in real mode", async () => {
     const socket = new Socket(), events: VoiceEvent[] = [];
