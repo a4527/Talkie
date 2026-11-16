@@ -39,18 +39,18 @@ const LEVEL_EXPECTATIONS: Record<LanguageLevel, string> = {
 
 // Distinctions the case review asked the prompt to state (FIRST-MISSION-EVALUATION-CASES, DEC-085).
 const LANGUAGE_DEFINITIONS: Record<string, string> = {
-  grammar_meaning_relations: "시제·부정·대조·조건 등 문법 형태가 의도한 의미 관계를 바르게 나타내는가.",
-  grammar_sentence_structure: "요청·설명·응답 문장의 구조가 성립하는가. 완전한 복문을 요구하지 않는다.",
-  grammar_level_stability: "전체 대화에서 실제 사용한 구조를 선택 수준에서 일관되게 유지하는가. 같은 구조의 반복 오류는 여기서도 따로 반영한다.",
-  vocabulary_intended_words: "의도한 대상·조건을 가리키는 단어를 맞게 골랐는가.",
-  vocabulary_natural_combinations: "단어 조합(연어)이 자연스러운가.",
-  vocabulary_situational_expressions: "상황과 상대에 맞는 표현·공손함인가.",
-  organization_information_order: "필요한 정보를 이해하기 쉬운 순서로 제시하는가.",
-  organization_reason_contrast_condition: "이유·대조·조건이 필요할 때 연결하는가. 접속사가 없다는 이유만으로 감점하지 않는다.",
-  organization_concise_relevant: "발화가 미션과 관련되고 필요 이상으로 장황하지 않은가.",
-  interaction_responsive_reply: "직전 상대 발화(질문·제안)에 맞는 응답을 하는가.",
-  interaction_explain_confirm_repair: "필요한 경우 설명·확인·수정을 하는가. 필요하지 않았던 행동을 하지 않았다고 감점하지 않는다.",
-  interaction_connection_to_prior: "더 앞선 대화와 자기 발화의 내용과 일관되게 이어지는가. 직전 질문에 답하는지는 '상대 말에 맞는 응답'에서 본다.",
+  grammar_meaning_relations: "시제·부정·대조·조건 등 문법 형태(동사 형태·조동사·접속 구조)가 의도한 의미 관계를 바르게 나타내는가. 문법 형태는 맞는데 단어 뜻을 혼동해 내용이 모순되는 것은 여기서 보지 않는다('의도에 맞는 단어').",
+  grammar_sentence_structure: "요청·설명·응답 문장의 구조가 성립하는가. 완전한 복문을 요구하지 않으며 맥락에서 성립하는 짧은 답·생략형은 맞다. 서술어 등 필요한 요소가 빠지거나 동사 형태가 틀려 문장이 성립하지 않으면 여기서 반영한다. 단발 오류를 자동으로 미충족으로 두지 않는다.",
+  grammar_level_stability: "전체 대화에서 실제 사용한 문법 구조를 선택 수준에서 일관되게 바르게 쓰는가. 같은 구조의 오류가 반복되면 여기서도 따로 반영한다. 단어 혼동·내용 모순·화제 이탈은 문법 구조의 불안정이 아니므로 여기서 보지 않는다.",
+  vocabulary_intended_words: "의도한 대상·조건을 가리키는 단어를 맞게 골랐는가. 단어 뜻을 혼동해 원하는 조건이 전달되지 않으면 여기서 반영한다.",
+  vocabulary_natural_combinations: "단어 조합(연어)이 자연스러운가. 단어 뜻 혼동은 '의도에 맞는 단어', 빠진 서술어·어순 오류는 '문장 구조'에서 본다.",
+  vocabulary_situational_expressions: "상황과 상대에 맞는 표현·공손함인가. 무례하거나 말투가 상황에 어긋나는 표현만 본다. 화제 이탈·내용 혼란은 여기서 보지 않는다.",
+  organization_information_order: "학습자가 문제·요청을 설명할 때 필요한 정보를 이해하기 쉬운 순서로 제시하는가. 이후 내용의 번복·모순은 여기서 보지 않는다.",
+  organization_reason_contrast_condition: "이유·대조·조건이 필요할 때 연결하는가. 접속사가 없다는 이유만으로 감점하지 않으며, 관계가 분명한 병치는 충족이다. 단어 혼동으로 생긴 내용 모순은 여기서 보지 않는다.",
+  organization_concise_relevant: "발화가 미션과 관련되고 필요 이상으로 장황하지 않은가. 미션과 무관한 발화는 여기서 반영한다. 관련 주제 안에서의 혼란·모순은 여기서 보지 않는다.",
+  interaction_responsive_reply: "직전 상대 발화(질문·제안)의 주제와 요구에 맞춰 답하는가. 주제에 맞춰 답했지만 내용이 모호·모순인 문제는 '필요한 설명·확인·수정'에서 본다.",
+  interaction_explain_confirm_repair: "필요한 경우 설명·확인·수정을 하는가. 상대가 확인을 요청했는데 명료화하지 못하면 여기서 반영한다. 필요하지 않았던 행동을 하지 않았다고 감점하지 않는다. 처음부터 말하지 않은 목표 조건은 목표 항목에서 보며, 대화 중 질문·오해로 드러난 필요가 없었다면 여기서 다시 감점하지 않는다.",
+  interaction_connection_to_prior: "더 앞선 대화와 자기 발화의 내용과 일관되게 이어지는가. 직전 질문에 답하는지는 '상대 말에 맞는 응답'에서 본다. 결정을 바꾸는 것 자체는 불일치가 아니며, 사실을 모순되게 말한 경우가 해당한다.",
 };
 
 export interface EvaluationContext {
@@ -69,11 +69,12 @@ export function buildEvaluationSystemPrompt(context: EvaluationContext) {
     `미션: ${definition.publicView.situation} 학습자 역할: ${definition.publicView.learnerRole}. 상대역: ${definition.publicView.partnerRole}.`,
     `허용 해결 경로:\n${routes}\n환불이 확정되면 온도·카페인 해결 항목 모두 허용 대안 해결로 인정한다. 경로 변경 전후의 해결을 중복 인정하지 않는다.`,
     `모드: ${context.missionMode === "practice" ? "연습(교정·다시 말하기 도움 사용은 감점하지 않는다)" : "실전(도움 없음)"}. 선택 수준 ${context.languageLevel}: ${LEVEL_EXPECTATIONS[context.languageLevel]}`,
-    `목표 항목(met|unmet|undeterminable):\n${goal}\n요청·제안만으로 해결·합의를 인정하지 않는다. 인사·감사만으로 합의를 인정하지 않는다. 문법 오류를 목표 점수에서 감점하지 않는다. 불명확한 전사·누락·상대역 조건 위반을 사용자 미충족으로 단정하지 않는다. 실제로 하지 않은 것은 unmet이다.`,
+    `목표 항목(met|unmet|undeterminable):\n${goal}\n요청·제안만으로 해결·합의를 인정하지 않는다. resolution_request는 학습자가 원하는 허용 처리를 직접 말하거나 상대역이 안내한 선택지 중 하나를 고른 발화로만 인정한다. 문제 설명, 한 가지 제안에 대한 수락(Yes, Okay, That works 등), 결정을 맡기는 말은 처리 요청이 아니다. 인사·감사만으로 합의를 인정하지 않는다. 문법 오류를 목표 점수에서 감점하지 않는다. 불명확한 전사·누락·상대역 조건 위반을 사용자 미충족으로 단정하지 않는다. 실제로 하지 않은 것은 unmet이다.`,
     `언어 기준(met|partial|unmet|undeterminable):\n${language}`,
-    "언어 기준은 각자의 정의에 따라 독립 판정한다. 같은 오류가 여러 정의에 해당하면 각 기준에서 반영할 수 있지만 정의와 무관한 오류로 감점하지 않는다. 오류 문장 비율로 환산하지 않는다. met은 관찰된 기회에 선택 수준의 기대를 안정적으로 보인 경우, partial은 의도는 대체로 전달되나 반복 오류·불명료함으로 불안정한 경우, unmet은 충분한 기회에도 어려움이 반복돼 의미 전달·진행에 뚜렷한 지장이 있는 경우다. 사소한 단발 오류로 unmet을 주지 않는다. 짧지만 충분한 응답을 길이로 감점하지 않는다. 필요하지 않았던 고급 구문·추가 행동을 요구하지 않는다. 근거가 정말 부족할 때만 undeterminable이며 실제 미수행·어려움을 undeterminable로 바꾸지 않는다.",
+    "언어 기준은 각자의 정의에 따라 독립 판정한다. 같은 오류가 여러 정의에 해당하면 각 기준에서 반영할 수 있지만 정의와 무관한 오류로 감점하지 않는다. 한 문제를 여러 기준에서 감점하려면 기준마다 그 정의에 직접 해당하는 학습자 발화를 근거로 들 수 있어야 하며, 정의에 '여기서 보지 않는다'고 적힌 문제는 그 기준에서 감점하지 않는다. 오류 문장 비율로 환산하지 않는다. met은 관찰된 기회에 선택 수준의 기대를 안정적으로 보인 경우, partial은 의도는 대체로 전달되나 반복 오류·불명료함으로 불안정한 경우, unmet은 충분한 기회에도 어려움이 반복돼 의미 전달·진행에 뚜렷한 지장이 있는 경우다. 사소한 단발 오류로 unmet을 주지 않는다. 짧지만 충분한 응답을 길이로 감점하지 않는다. 필요하지 않았던 고급 구문·추가 행동을 요구하지 않는다. 근거가 정말 부족할 때만 undeterminable이며 실제 미수행·어려움을 undeterminable로 바꾸지 않는다.",
     "평가는 학습자(user) 발화만 대상으로 한다. AI 발화는 맥락이며, 교정 직후 따라 말한 것과 이후 스스로 적용한 것을 구분한다. 발음·억양·속도는 평가하지 않는다.",
-    `근거 규칙: evidence와 counterEvidence의 각 항목은 {turnId, text}이며 turnId는 role이 user인 턴, text는 그 턴 원문에서 글자 그대로 복사한 ${MISSION_EVALUATION_LIMITS.maxQuoteChars}자 이하의 짧은 일부다. met·partial은 evidence가 1개 이상 필요하다. 각 기준의 근거는 최대 ${MISSION_EVALUATION_LIMITS.maxEvidence}개.`,
+    "hasConversationGaps가 true이면 학습자 발화 일부가 저장되지 않아 입력에 없다. 남은 상대역 발화로 누락된 학습자 수행을 추정하지 않는다. 누락 때문에 수행 여부를 확인할 수 없는 항목은 unmet이 아니라 undeterminable이며, 남은 발화로 확인되는 항목은 그대로 판정한다. 누락으로 학습자의 문제 설명·요청 발화가 없어 남은 발화(예: 짧은 수락)만으로 그 기준이 보는 수행(설명의 정보 순서·연결, 여러 구조의 일관성)을 관찰할 수 없으면 해당 언어 기준도 undeterminable이다. 누락이 없을 때는 대화가 짧다는 이유만으로 undeterminable로 두지 않는다.",
+    `근거 규칙: evidence와 counterEvidence의 각 항목은 {turnId, text}이며 turnId는 role이 user인 턴, text는 그 턴 원문에서 글자 그대로 복사한 ${MISSION_EVALUATION_LIMITS.maxQuoteChars}자 이하의 연속된 일부다. 여러 단어·구절을 쉼표로 이어 붙이거나 요약·생략하면 응답 전체가 거부된다. 단어 하나를 근거로 들 때도 그 턴 원문의 연속 구간만 쓰고, 여러 단어는 각각 별도 항목으로 인용한다. role이 assistant인 턴(상대역 확정·튜터 교정 포함)은 근거로 인용하지 않는다. 상대역의 확정이 필요한 목표 항목은 학습자의 수락 발화를 근거로 들고 상대역 확정은 reason에 적는다. met·partial은 evidence가 1개 이상 필요하다. 각 기준의 근거는 최대 ${MISSION_EVALUATION_LIMITS.maxEvidence}개.`,
     "반환 형식: {\"judgements\":[{criterionId,verdict,evidence:[{turnId,text}],counterEvidence:[{turnId,text}],reason}]}. 모든 기준을 정확히 한 번씩 포함한다. 총점은 계산하지 않는다.",
   ].join("\n\n");
 }

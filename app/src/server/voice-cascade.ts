@@ -154,12 +154,15 @@ export async function cascadeSpeech(text: string, signal: AbortSignal, request: 
 export const NOTE_EXTRACTION_MODEL = "gemini-3.5-flash-lite";
 const retryableStatus = (status: unknown) => typeof status !== "number" || status === 408 || status === 429 || status >= 500;
 
-/** Adapter for extractNote. Auth/billing/other 4xx errors become non-retryable; network, 408, 429, 5xx stay retryable. */
-export function createGeminiExtractionGenerate(request: typeof fetch = fetch, onUsage?: (usage: GeminiUsageObservation) => void | Promise<void>): ExtractionGenerate {
+/**
+ * Adapter for extractNote. Auth/billing/other 4xx errors become non-retryable; network, 408, 429, 5xx stay retryable.
+ * `model` is for local comparison scripts only; the product always uses NOTE_EXTRACTION_MODEL.
+ */
+export function createGeminiExtractionGenerate(request: typeof fetch = fetch, onUsage?: (usage: GeminiUsageObservation) => void | Promise<void>, model: string = NOTE_EXTRACTION_MODEL): ExtractionGenerate {
   return async ({ system, input, maxOutputTokens }, signal) => {
     let result;
     try {
-      result = await googleCall(NOTE_EXTRACTION_MODEL, { systemInstruction: { parts: [{ text: system }] },
+      result = await googleCall(model, { systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: "user", parts: [{ text: input }] }],
         generationConfig: { responseMimeType: "application/json", maxOutputTokens } }, signal, request, onUsage);
     } catch (error) {

@@ -188,6 +188,8 @@ describe("mission realtime providers", () => {
     for (const fact of [...definition.partner.knowsAtStart, ...definition.partner.learnsOnlyFromLearner, ...definition.routes.map(r => r.fixedConditions)]) expect(real).toContain(fact);
     expect(real).toContain("## 실전 모드"); expect(real).toContain("`no_progress`"); expect(real).not.toContain("record_learning_result");
     expect(practice).toContain("record_learning_result"); expect(practice).not.toContain("`no_progress`");
+    // PRD 4.2.1: options only when the learner asks how or leaves the choice; never chosen for them (2026-11-16 provider check).
+    for (const text of [real, practice]) { expect(text).toContain("처리 방법·선택지를 먼저 꺼내지 않습니다"); expect(text).toContain("대신 고르지 않습니다"); }
   });
   it("emits mission reports from Gemini tool calls and ignores corrections in real mode", async () => {
     const socket = new Socket(), events: VoiceEvent[] = [];

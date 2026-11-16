@@ -12,7 +12,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run tests/learning.test.ts tests/voice.test.ts tests/voice-cascade.test.ts tests/voice-playback.test.ts tests/soniox-events.test.ts tests/soniox-transport.test.ts tests/voice-cascade-route.test.ts tests/voice-cascade-server.test.ts tests/google-cloud-auth.test.ts tests/voice-usage.test.ts tests/voice-route.test.ts tests/naming-contracts.test.ts tests/note-extraction.test.ts tests/note-eval.test.ts tests/mission.test.ts tests/mission-realtime.test.ts tests/mission-evaluation.test.ts tests/mission-display.test.ts",
+    "test": "vitest run tests/learning.test.ts tests/voice.test.ts tests/voice-cascade.test.ts tests/voice-playback.test.ts tests/soniox-events.test.ts tests/soniox-transport.test.ts tests/voice-cascade-route.test.ts tests/voice-cascade-server.test.ts tests/google-cloud-auth.test.ts tests/voice-usage.test.ts tests/voice-route.test.ts tests/naming-contracts.test.ts tests/note-extraction.test.ts tests/note-eval.test.ts tests/mission.test.ts tests/mission-realtime.test.ts tests/mission-evaluation.test.ts tests/mission-display.test.ts tests/mission-eval-cases.test.ts",
     "test:e2e": "playwright test --config tests/browser/playwright.config.ts",
     "test:predeploy:e2e": "node --env-file-if-exists=.env --import tsx scripts/predeploy-e2e.ts",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; for (const path of ['.next', 'test-results', 'playwright-report', 'tsconfig.tsbuildinfo']) rmSync(path, { recursive: true, force: true });\"",
@@ -23,7 +23,9 @@
     "local:up": "docker compose up -d --wait",
     "local:down": "docker compose down",
     "test:server": "node --conditions=react-server --env-file-if-exists=.env --import tsx --test tests/server.test.ts",
-    "local:configure": "node --import tsx scripts/configure-local.ts"
+    "local:configure": "node --import tsx scripts/configure-local.ts",
+    "mission:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-mission.ts",
+    "mission:partner-eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-mission-partner.ts"
   },
   "engines": {
     "node": ">=22.12"

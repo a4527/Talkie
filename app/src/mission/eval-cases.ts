@@ -1,0 +1,350 @@
+// Fixed synthetic mission-evaluation cases (docs/proposals/FIRST-MISSION-EVALUATION-CASES.md, scripts fixed
+// 2026-11-09, candidate verdicts reviewed 2026-11-14). The expected verdicts are review candidates, not an
+// approved answer key; a mismatch is a point to read by hand, not an automatic failure of the model.
+import type { ConversationSnapshot, Correction, Turn } from "../learning/types";
+import type { LanguageLevel, MissionMode } from "./constants";
+import type { CriterionJudgement, Verdict } from "./evaluation";
+
+type Line = [id: string, role: "staff" | "user" | "tutor", text: string];
+type Expected = Record<string, Verdict>;
+export interface MissionEvalCase {
+  id: string; title: string; languageLevel: LanguageLevel; missionMode: MissionMode;
+  missionEndReason: string | null; finalRouteId: string | null;
+  snapshot: ConversationSnapshot;
+  /** Candidate verdict per criterion (all 18). */
+  expected: Expected;
+  /** Criteria the case document marks as a boundary (경계); a mismatch there is reported separately. */
+  boundary: readonly string[];
+  /** Candidate total in half-points, or null when the document withholds it (U-01). */
+  expectedHalf: { earned: number; max: number } | null;
+}
+
+const turns = (lines: Line[]): Turn[] => lines.map(([id, role, text]) => ({ turnId: id, requestId: `r-${id}`, role: role === "user" ? "user" : "assistant", text }));
+const snap = (lines: Line[], corrections: Correction[] = [], hasConversationGaps = false): ConversationSnapshot =>
+  ({ turns: turns(lines), corrections, learningState: "conversation", ...(hasConversationGaps ? { hasConversationGaps } : {}) });
+
+const GOALS = ["temperature_mismatch", "caffeine_mismatch", "resolution_request", "final_temperature_resolved", "final_caffeine_resolved", "final_agreement"] as const;
+const LANGUAGE = ["grammar_meaning_relations", "grammar_sentence_structure", "grammar_level_stability", "vocabulary_intended_words", "vocabulary_natural_combinations",
+  "vocabulary_situational_expressions", "organization_information_order", "organization_reason_contrast_condition", "organization_concise_relevant",
+  "interaction_responsive_reply", "interaction_explain_confirm_repair", "interaction_connection_to_prior"] as const;
+const all = (verdict: Verdict, overrides: Expected = {}): Expected => ({ ...Object.fromEntries([...GOALS, ...LANGUAGE].map(id => [id, verdict])), ...overrides });
+const failedGoal: Expected = { final_temperature_resolved: "unmet", final_caffeine_resolved: "unmet", final_agreement: "unmet" };
+
+const OPEN = "Hi. How can I help?";
+
+export const MISSION_EVAL_CASES: MissionEvalCase[] = [
+  { id: "A2", title: "A2 기본 대화", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["A2-1", "staff", OPEN],
+      ["A2-2", "user", "I ordered a hot decaf latte, but this is iced and the label says regular. Could you make it hot and decaf?"],
+      ["A2-3", "staff", "I'm sorry. I can remake it at no extra charge. It will take about five minutes. Is that okay?"],
+      ["A2-4", "user", "Yes, please. I can wait five minutes."],
+      ["A2-5", "staff", "Thank you. I'll remake your hot decaf latte now."]]),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+  { id: "P-01", title: "문장은 불완전하지만 요청은 분명함", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["P-01-1", "staff", OPEN],
+      ["P-01-2", "user", "I ordered hot decaf. This iced, label regular. Could you make it hot and decaf?"],
+      ["P-01-3", "staff", "I’m sorry. I can remake your latte hot and decaf at no extra charge. It will take about five minutes. Is that okay?"],
+      ["P-01-4", "user", "Yes, please. I can wait five minutes."],
+      ["P-01-5", "staff", "Thank you. I’ll remake your hot decaf latte now."]]),
+    expected: all("met", { grammar_sentence_structure: "partial" }), boundary: ["organization_reason_contrast_condition"], expectedHalf: { earned: 197, max: 200 } },
+  { id: "P-02", title: "같은 문법 오류 반복, 해결됨", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["P-02-1", "staff", OPEN],
+      ["P-02-2", "user", "I ordered a hot decaf latte, but this is iced and marked regular. Could you making it hot and decaf?"],
+      ["P-02-3", "staff", "I’m sorry. I can remake it at no extra charge. It will take about five minutes. Is that okay?"],
+      ["P-02-4", "user", "I can wait five minutes. Could you making it hot and decaf, please?"],
+      ["P-02-5", "staff", "Certainly. I’ll remake your hot decaf latte now at no extra charge."]]),
+    expected: all("met", { grammar_sentence_structure: "partial", grammar_level_stability: "partial" }), boundary: [], expectedHalf: { earned: 194, max: 200 } },
+  { id: "F-01", title: "말을 바꿔 원하는 온도를 알 수 없음", languageLevel: "A2", missionMode: "real", missionEndReason: "user_ended", finalRouteId: null,
+    snapshot: snap([["F-01-1", "staff", OPEN],
+      ["F-01-2", "user", "I ordered a hot decaf latte, but this is iced and marked regular. Could you remake it?"],
+      ["F-01-3", "staff", "I’m sorry. I can remake it hot and decaf at no extra charge in about five minutes. Is that okay?"],
+      ["F-01-4", "user", "I want it iced. No, hot means iced."],
+      ["F-01-5", "staff", "Do you want the replacement hot or iced?"],
+      ["F-01-6", "user", "Hot. No, iced. Hot is not hot."],
+      ["F-01-7", "staff", "I’m not sure which temperature you want. Which should I make: hot or iced?"],
+      ["F-01-8", "user", "Iced means hot. I want hot, not hot."],
+      ["F-01-9", "user", "I want to end this conversation now."],
+      ["F-01-10", "staff", "Okay. We’ll stop here. No replacement or refund has been agreed."]]),
+    expected: all("met", { ...failedGoal, vocabulary_intended_words: "unmet", interaction_explain_confirm_repair: "partial", interaction_connection_to_prior: "partial" }),
+    boundary: ["vocabulary_natural_combinations", "interaction_responsive_reply"], expectedHalf: { earned: 106, max: 200 } },
+  { id: "F-02", title: "질문에 계속 엉뚱한 답", languageLevel: "B1", missionMode: "real", missionEndReason: "no_progress_failed", finalRouteId: null,
+    snapshot: snap([["F-02-1", "staff", OPEN],
+      ["F-02-2", "user", "I ordered a hot decaf latte, but this is iced and marked regular. Could you remake it?"],
+      ["F-02-3", "staff", "I’m sorry. I can remake it at no extra charge in about five minutes. Is waiting five minutes okay?"],
+      ["F-02-4", "user", "My neighbour has a blue bicycle."],
+      ["F-02-5", "staff", "If you can’t wait, I can cancel the drink and give you a full refund. Would you prefer a remake or a refund?"],
+      ["F-02-6", "user", "The moon looks round tonight."],
+      ["F-02-7", "staff", "We haven’t agreed on a solution. What would you like me to do about this drink?"],
+      ["F-02-8", "user", "My favourite animal is a tiger."],
+      ["F-02-9", "staff", "We haven’t been able to agree on how to resolve this, so we’ll stop here."]]),
+    expected: all("met", { ...failedGoal, organization_concise_relevant: "unmet", interaction_responsive_reply: "unmet", interaction_explain_confirm_repair: "partial", interaction_connection_to_prior: "unmet" }),
+    boundary: ["vocabulary_intended_words", "vocabulary_situational_expressions"], expectedHalf: { earned: 97, max: 200 } },
+  { id: "U-01", title: "기록이 빠져 마지막 수락만 남음", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["U-01-1", "staff", OPEN],
+      ["U-01-2", "staff", "I’m sorry. I can remake your latte hot and decaf at no extra charge. It will take about five minutes. Is that okay?"],
+      ["U-01-3", "user", "Yes, please. I can wait five minutes."],
+      ["U-01-4", "staff", "Thank you. I’ll remake your hot decaf latte now."]], [], true),
+    expected: all("met", { temperature_mismatch: "undeterminable", caffeine_mismatch: "undeterminable", resolution_request: "undeterminable",
+      grammar_level_stability: "undeterminable", organization_information_order: "undeterminable", organization_reason_contrast_condition: "undeterminable" }),
+    boundary: [], expectedHalf: null },
+  { id: "U-02", title: "C를 선택하고 짧게 잘 해결", languageLevel: "C", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["U-02-1", "staff", OPEN],
+      ["U-02-2", "user", "I ordered a hot decaf latte, but this is iced and the label says regular. Could you make it hot and decaf?"],
+      ["U-02-3", "staff", "I’m sorry. I can remake it at no extra charge. It will take about five minutes. Is that okay?"],
+      ["U-02-4", "user", "Yes, please. I can wait five minutes."],
+      ["U-02-5", "staff", "Thank you. I’ll remake your hot decaf latte now."]]),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+  { id: "R-01", title: "교정 후 스스로 적용", languageLevel: "A2", missionMode: "practice", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["R-01-1", "staff", OPEN],
+      ["R-01-2", "user", "I ordered a hot decaf latte, but this is iced and marked regular. Could you making it hot and decaf?"],
+      ["R-01-3", "tutor", "Use “Could you make it hot and decaf?” Try that request again."],
+      ["R-01-4", "user", "Could you make it hot and decaf?"],
+      ["R-01-5", "staff", "Of course. I can remake it at no extra charge."],
+      ["R-01-6", "user", "Could you tell me how long it will take?"],
+      ["R-01-7", "staff", "About five minutes. Is that okay?"],
+      ["R-01-8", "user", "Yes, please. I can wait five minutes."],
+      ["R-01-9", "staff", "I’ll remake your hot decaf latte now."]],
+      [{ correctionId: "c-R-01", sourceTurnId: "R-01-2", deliveredTurnId: "R-01-3", replacement: "Could you make it hot and decaf?", explanation: "Could you + base verb", attempts: [{ turnId: "R-01-4", outcome: "success" }] }]),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+  { id: "R-02", title: "반복 오류 후 마지막만 따라 함", languageLevel: "A2", missionMode: "practice", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["R-02-1", "staff", OPEN],
+      ["R-02-2", "user", "I ordered a hot decaf latte, but this is iced and marked regular. Could you making it hot and decaf?"],
+      ["R-02-3", "tutor", "Use “Could you make it hot and decaf?” Try that request again."],
+      ["R-02-4", "user", "Could you making it hot and decaf?"],
+      ["R-02-5", "tutor", "After “Could you”, use “make”. Say “Could you make it hot and decaf?”"],
+      ["R-02-6", "user", "Could you making it hot and decaf?"],
+      ["R-02-7", "tutor", "Try once more: “Could you make it hot and decaf?”"],
+      ["R-02-8", "user", "Could you make it hot and decaf?"],
+      ["R-02-9", "staff", "I can remake it at no extra charge in about five minutes. Is that okay?"],
+      ["R-02-10", "user", "Yes, please. I can wait five minutes."],
+      ["R-02-11", "staff", "I’ll remake your hot decaf latte now."]],
+      [{ correctionId: "c-R-02", sourceTurnId: "R-02-2", deliveredTurnId: "R-02-3", replacement: "Could you make it hot and decaf?", explanation: "Could you + base verb",
+        attempts: [{ turnId: "R-02-4", outcome: "failure" }, { turnId: "R-02-6", outcome: "failure" }, { turnId: "R-02-8", outcome: "success" }] }]),
+    expected: all("met", { grammar_sentence_structure: "partial", grammar_level_stability: "partial" }),
+    boundary: ["interaction_explain_confirm_repair"], expectedHalf: { earned: 194, max: 200 } },
+];
+
+// Holdout cases (docs/proposals/FIRST-MISSION-HOLDOUT-CASES.md), candidate verdicts fixed 2026-11-16 before any
+// model run. The evaluation prompt must not be tuned on their results; once it is, they stop being a holdout.
+const H01_OPENING: Line[] = [["H-0X-1", "staff", OPEN], ["H-0X-2", "user", "This not my drink."], ["H-0X-3", "staff", "I'm sorry. What's wrong with it?"], ["H-0X-4", "user", "It wrong. I not like it."]];
+const opening = (id: string): Line[] => H01_OPENING.map(([lineId, role, text]) => [lineId.replace("H-0X", id), role, text]);
+const VAGUE_LANGUAGE: Expected = { temperature_mismatch: "unmet", caffeine_mismatch: "unmet", grammar_meaning_relations: "partial", grammar_sentence_structure: "partial",
+  grammar_level_stability: "partial", interaction_explain_confirm_repair: "partial" };
+const VAGUE_BOUNDARY = ["vocabulary_intended_words", "organization_information_order", "interaction_responsive_reply"];
+
+export const HOLDOUT_EVAL_CASES: MissionEvalCase[] = [
+  { id: "H-01", title: "문제를 모호하게 말하고 환불 요청", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([...opening("H-01"),
+      ["H-01-5", "staff", "I see. I can make you a new drink at no extra charge in about five minutes, or cancel it and give you a full refund. Which would you prefer?"],
+      ["H-01-6", "user", "Refund, please. I have no time."],
+      ["H-01-7", "staff", "Of course. I'll cancel this drink and give you a full refund. Is that okay?"],
+      ["H-01-8", "user", "Yes, please. Thank you."],
+      ["H-01-9", "staff", "Your full refund is done."]]),
+    expected: all("met", VAGUE_LANGUAGE), boundary: VAGUE_BOUNDARY, expectedHalf: { earned: 167, max: 200 } },
+  { id: "H-02", title: "모호한 문제 설명 후 처리를 직원에게 맡김", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([...opening("H-02"),
+      ["H-02-5", "staff", "I see. I can make you a new drink at no extra charge in about five minutes, or cancel it and give you a full refund. What would you like me to do?"],
+      ["H-02-6", "user", "I don't know. You choose."],
+      ["H-02-7", "staff", "Then I'll cancel it and give you a full refund. Is that okay?"],
+      ["H-02-8", "user", "Okay. Thank you."],
+      ["H-02-9", "staff", "Your full refund is done."]]),
+    expected: all("met", { ...VAGUE_LANGUAGE, resolution_request: "unmet" }), boundary: [...VAGUE_BOUNDARY, "organization_reason_contrast_condition"], expectedHalf: { earned: 147, max: 200 } },
+  { id: "H-03", title: "온도만 말하고 재제조 합의", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["H-03-1", "staff", OPEN],
+      ["H-03-2", "user", "I ordered a hot latte, but this one is iced. Could you make it hot, please?"],
+      ["H-03-3", "staff", "I'm sorry. I can remake it hot at no extra charge. It will take about five minutes. Is that okay?"],
+      ["H-03-4", "user", "Yes, that's fine. I can wait."],
+      ["H-03-5", "staff", "Great. I'll remake your latte hot now."]]),
+    // DEC-090 (2026-11-16): the omitted decaf is a goal-item miss only; candidate changed from partial after review.
+    expected: all("met", { caffeine_mismatch: "unmet", final_caffeine_resolved: "unmet" }),
+    boundary: [], expectedHalf: { earned: 170, max: 200 } },
+  { id: "H-04", title: "비용·시간 확인 질문과 단발 잡담", languageLevel: "B2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["H-04-1", "staff", OPEN],
+      ["H-04-2", "user", "Hi. I ordered a hot decaf latte, but I've been given an iced one, and the label says regular."],
+      ["H-04-3", "staff", "I'm sorry about that. I can remake it hot and decaf at no extra charge in about five minutes, or cancel it and give you a full refund."],
+      ["H-04-4", "user", "Busy morning, huh? Just to check, would the remake cost anything extra, and is five minutes the longest it might take?"],
+      ["H-04-5", "staff", "No extra charge at all, and it should be about five minutes."],
+      ["H-04-6", "user", "Great, then I'll go with the remake, please."],
+      ["H-04-7", "staff", "Perfect. I'll remake your hot decaf latte now."]]),
+    expected: all("met"), boundary: ["organization_concise_relevant"], expectedHalf: { earned: 200, max: 200 } },
+  { id: "H-05", title: "사용자 수락 발화가 저장 누락", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["H-05-1", "staff", OPEN],
+      ["H-05-2", "user", "I ordered a hot decaf latte, but this is iced and the label says regular. Can you make a new one?"],
+      ["H-05-3", "staff", "I'm sorry. I can remake it hot and decaf at no extra charge. It will take about five minutes. Is that okay?"],
+      ["H-05-5", "staff", "Great. I'll remake your hot decaf latte now."]], [], true),
+    expected: all("met", { final_temperature_resolved: "undeterminable", final_caffeine_resolved: "undeterminable", final_agreement: "undeterminable", interaction_connection_to_prior: "undeterminable" }),
+    boundary: ["grammar_level_stability", "interaction_responsive_reply"], expectedHalf: { earned: 114, max: 114 } },
+  { id: "H-06", title: "교정 뒤 새 요청에서 같은 오류", languageLevel: "A2", missionMode: "practice", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["H-06-1", "staff", OPEN],
+      ["H-06-2", "user", "I ordered a hot decaf latte, but this is iced and marked regular. Could you making it hot and decaf?"],
+      ["H-06-3", "tutor", "Use “Could you make it hot and decaf?” Try that request again."],
+      ["H-06-4", "user", "Could you make it hot and decaf?"],
+      ["H-06-5", "staff", "Of course. I can remake it at no extra charge. It will take about five minutes. Is that okay?"],
+      ["H-06-6", "user", "Sorry, I can't wait. Could you giving me a refund?"],
+      ["H-06-7", "staff", "Of course. I'll cancel this drink and give you a full refund. Is that okay?"],
+      ["H-06-8", "user", "Yes, please."],
+      ["H-06-9", "staff", "Your full refund is done."]],
+      [{ correctionId: "c-H-06", sourceTurnId: "H-06-2", deliveredTurnId: "H-06-3", replacement: "Could you make it hot and decaf?", explanation: "Could you + base verb", attempts: [{ turnId: "H-06-4", outcome: "success" }] }]),
+    expected: all("met", { grammar_sentence_structure: "partial", grammar_level_stability: "partial" }), boundary: [], expectedHalf: { earned: 194, max: 200 } },
+  // Added after the first holdout run: H-01/H-04 rewritten so the staff obeys the partner rules (no unasked
+  // resolution; both options only when asked). Fixed before running.
+  { id: "H-07", title: "H-01을 상대역 규칙대로 고침", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([...opening("H-07"),
+      ["H-07-5", "staff", "Sorry, could you tell me what's different from what you ordered?"],
+      ["H-07-6", "user", "I don't know. Just wrong."],
+      ["H-07-7", "staff", "Okay. What would you like me to do about it?"],
+      ["H-07-8", "user", "Refund, please. I have no time."],
+      ["H-07-9", "staff", "Of course. I can cancel this drink and give you a full refund, with no fee. Is that okay?"],
+      ["H-07-10", "user", "Yes, please. Thank you."],
+      ["H-07-11", "staff", "Your full refund is done."]]),
+    expected: all("met", { ...VAGUE_LANGUAGE, interaction_explain_confirm_repair: "unmet" }), boundary: VAGUE_BOUNDARY, expectedHalf: { earned: 164, max: 200 } },
+  { id: "H-08", title: "H-04를 상대역 규칙대로 고침", languageLevel: "B2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["H-08-1", "staff", OPEN],
+      ["H-08-2", "user", "Hi. I ordered a hot decaf latte, but I've been given an iced one, and the label says regular."],
+      ["H-08-3", "staff", "I'm sorry about that. How would you like me to fix it?"],
+      ["H-08-4", "user", "Busy morning, huh? What are my options?"],
+      ["H-08-5", "staff", "I can remake it hot and decaf at no extra charge in about five minutes, or cancel it and give you a full refund."],
+      ["H-08-6", "user", "Just to check, is five minutes the longest it might take?"],
+      ["H-08-7", "staff", "Yes, it should be about five minutes."],
+      ["H-08-8", "user", "Great, then I'll go with the remake, please."],
+      ["H-08-9", "staff", "Perfect. I'll remake your hot decaf latte now."]]),
+    expected: all("met"), boundary: ["organization_concise_relevant"], expectedHalf: { earned: 200, max: 200 } },
+];
+
+// Second holdout round (N-01~N-06), fixed 2026-11-16 after every H case had been run and before any N run.
+// Staff lines follow the tightened partner rules. Same rule: never tune the prompt on these results.
+export const HOLDOUT2_EVAL_CASES: MissionEvalCase[] = [
+  { id: "N-01", title: "A1 단어·짧은 문장으로 충분히 해결", languageLevel: "A1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["N-01-1", "staff", OPEN],
+      ["N-01-2", "user", "Hot decaf latte. My order. This is iced. Regular."],
+      ["N-01-3", "staff", "Oh, I'm sorry. What would you like me to do?"],
+      ["N-01-4", "user", "New one, please. Hot. Decaf."],
+      ["N-01-5", "staff", "Sure. I can make a new hot decaf latte, free. It takes about five minutes. Okay?"],
+      ["N-01-6", "user", "Okay. I wait."],
+      ["N-01-7", "staff", "Great. I'll make your hot decaf latte now."]]),
+    expected: all("met"), boundary: ["grammar_sentence_structure"], expectedHalf: { earned: 200, max: 200 } },
+  { id: "N-02", title: "카페인 누락 재제조·동사 형태 반복 오류", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["N-02-1", "staff", OPEN],
+      ["N-02-2", "user", "Hello. I order a hot latte, but this one was cold, so I am not happy."],
+      ["N-02-3", "staff", "I'm sorry about that. What would you like me to do?"],
+      ["N-02-4", "user", "Can you make again the drink? Hot one."],
+      ["N-02-5", "staff", "Of course. I can remake it hot at no extra charge. It will take about five minutes. Is that okay?"],
+      ["N-02-6", "user", "Five minutes is okay. I will waiting."],
+      ["N-02-7", "staff", "Great. I'll remake your latte hot now."]]),
+    expected: all("met", { caffeine_mismatch: "unmet", final_caffeine_resolved: "unmet", grammar_meaning_relations: "partial", grammar_sentence_structure: "partial",
+      grammar_level_stability: "partial" }), // DEC-090: explain/confirm changed partial -> met after review.
+    boundary: ["vocabulary_natural_combinations"], expectedHalf: { earned: 160, max: 200 } },
+  { id: "N-03", title: "C 관용 표현으로 간결하게 환불", languageLevel: "C", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["N-03-1", "staff", OPEN],
+      ["N-03-2", "user", "Hi, I ordered a hot decaf latte, but this one's iced and the label says regular."],
+      ["N-03-3", "staff", "I'm so sorry. What would you like me to do?"],
+      ["N-03-4", "user", "I'm actually in a bit of a rush, so could you just refund it?"],
+      ["N-03-5", "staff", "Of course. I'll cancel the drink and give you a full refund, with no fee. Is that alright?"],
+      ["N-03-6", "user", "Yes, that's great. Thanks for sorting it."],
+      ["N-03-7", "staff", "You're welcome. The full refund is done."]]),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+  { id: "N-04", title: "처리 요청 발화가 저장 누락", languageLevel: "B2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["N-04-1", "staff", OPEN],
+      ["N-04-2", "user", "Hi. I ordered a hot decaf latte, but this one is iced and the label says regular."],
+      ["N-04-3", "staff", "I'm sorry about that. What would you like me to do?"],
+      ["N-04-5", "staff", "Certainly. I can cancel this drink and give you a full refund, with no fee. Is that okay?"],
+      ["N-04-6", "user", "Yes, please. That works for me."],
+      ["N-04-7", "staff", "Done. Your full refund has been processed."]], [], true),
+    expected: all("met", { resolution_request: "undeterminable" }), boundary: ["grammar_level_stability", "interaction_connection_to_prior"], expectedHalf: { earned: 180, max: 180 } },
+  { id: "N-05", title: "재제조 요청 뒤 환불로 경로 변경", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["N-05-1", "staff", OPEN],
+      ["N-05-2", "user", "I ordered a hot decaf latte. But this is iced, and it is regular."],
+      ["N-05-3", "staff", "I'm sorry. What would you like me to do?"],
+      ["N-05-4", "user", "Can you make a new one, please?"],
+      ["N-05-5", "staff", "Sure. I can remake it hot and decaf at no extra charge. It will take about five minutes. Is that okay?"],
+      ["N-05-6", "user", "Oh, five minutes is long. Can I get a refund instead?"],
+      ["N-05-7", "staff", "Of course. I can cancel this drink and give you a full refund, with no fee. Is that okay?"],
+      ["N-05-8", "user", "Yes, please. Refund is better."],
+      ["N-05-9", "staff", "Okay. Your full refund is done."]]),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+  { id: "N-06", title: "요청 뒤 마음을 바꿔 합의 없이 종료", languageLevel: "B1", missionMode: "real", missionEndReason: "user_ended", finalRouteId: null,
+    snapshot: snap([["N-06-1", "staff", OPEN],
+      ["N-06-2", "user", "I ordered a hot decaf latte, but I got an iced regular one."],
+      ["N-06-3", "staff", "I'm sorry. What would you like me to do?"],
+      ["N-06-4", "user", "Could you remake it as a hot decaf, please?"],
+      ["N-06-5", "staff", "Of course. I can remake it hot and decaf at no extra charge. It will take about five minutes. Is that okay?"],
+      ["N-06-6", "user", "Hmm, I'm not sure. Maybe I'll just keep this one."],
+      ["N-06-7", "staff", "Okay. Would you like me to do anything else about it, or keep the drink as it is?"],
+      ["N-06-8", "user", "I want to end this conversation now."],
+      ["N-06-9", "staff", "Okay. We'll stop here. No replacement or refund has been agreed."]]),
+    expected: all("met", failedGoal), boundary: [], expectedHalf: { earned: 120, max: 200 } }, // DEC-090: a change of mind is not inconsistency.
+];
+
+// Third round (V-01~V-05), fixed after DEC-090/091 were put into the evaluation prompt and before any V run.
+export const HOLDOUT3_EVAL_CASES: MissionEvalCase[] = [
+  { id: "V-01", title: "요청 발화 누락", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["V-01-1", "staff", OPEN],
+      ["V-01-2", "user", "I ordered hot decaf latte, but this one is iced and it have caffeine."],
+      ["V-01-3", "staff", "I'm sorry about that. What would you like me to do?"],
+      ["V-01-5", "staff", "Of course. I can cancel this drink and give you a full refund, with no fee. Is that okay?"],
+      ["V-01-6", "user", "Yes, is fine. Thank you."],
+      ["V-01-7", "staff", "Your full refund is done."]], [], true),
+    expected: all("met", { resolution_request: "undeterminable", grammar_sentence_structure: "partial", grammar_level_stability: "partial" }),
+    boundary: ["interaction_connection_to_prior"], expectedHalf: { earned: 174, max: 180 } },
+  { id: "V-02", title: "안내받은 선택지 중 하나를 고름", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["V-02-1", "staff", OPEN],
+      ["V-02-2", "user", "I ordered a hot decaf latte. This is iced and regular."],
+      ["V-02-3", "staff", "I'm sorry. What would you like me to do?"],
+      ["V-02-4", "user", "I don't know. What can you do?"],
+      ["V-02-5", "staff", "I can remake it hot and decaf at no extra charge in about five minutes, or cancel it and give you a full refund."],
+      ["V-02-6", "user", "Refund, please."],
+      ["V-02-7", "staff", "Of course. I'll cancel this drink and give you a full refund, with no fee. Is that okay?"],
+      ["V-02-8", "user", "Yes. Thank you."],
+      ["V-02-9", "staff", "Your full refund is done."]]),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+  { id: "V-03", title: "수락만 하고 고르지 않음", languageLevel: "A2", missionMode: "real", missionEndReason: "user_ended", finalRouteId: null,
+    snapshot: snap([["V-03-1", "staff", OPEN],
+      ["V-03-2", "user", "I ordered a hot decaf latte, but this is iced and regular."],
+      ["V-03-3", "staff", "I'm sorry. What would you like me to do?"],
+      ["V-03-4", "user", "Hmm. I don't know."],
+      ["V-03-5", "staff", "I can remake it hot and decaf at no extra charge in about five minutes, or cancel it and give you a full refund. Which would you prefer?"],
+      ["V-03-6", "user", "Okay. Yes."],
+      ["V-03-7", "staff", "Sorry, I'm not sure which one you mean. A remake or a refund?"],
+      ["V-03-8", "user", "I want to end this conversation now."],
+      ["V-03-9", "staff", "Okay. We'll stop here. No replacement or refund has been agreed."]]),
+    expected: all("met", { ...failedGoal, resolution_request: "unmet", interaction_responsive_reply: "partial", interaction_explain_confirm_repair: "partial" }),
+    boundary: ["interaction_explain_confirm_repair"], expectedHalf: { earned: 93, max: 200 } },
+  { id: "V-04", title: "어순 오류 단발", languageLevel: "B2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+    snapshot: snap([["V-04-1", "staff", OPEN],
+      ["V-04-2", "user", "Hi. I ordered a hot decaf latte, but you gave me an iced one, and the label says regular."],
+      ["V-04-3", "staff", "I'm sorry about that. What would you like me to do?"],
+      ["V-04-4", "user", "Could you make hot it again, and decaf this time, please?"],
+      ["V-04-5", "staff", "Of course. I can remake it hot and decaf at no extra charge. It will take about five minutes. Is that okay?"],
+      ["V-04-6", "user", "That's fine. I can definitely wait five minutes."],
+      ["V-04-7", "staff", "Great. I'll remake your hot decaf latte now."]]),
+    expected: all("met", { grammar_sentence_structure: "partial" }), boundary: ["grammar_sentence_structure"], expectedHalf: { earned: 197, max: 200 } },
+  { id: "V-05", title: "누락됐지만 요청을 다시 말함", languageLevel: "A2", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "refund",
+    snapshot: snap([["V-05-1", "staff", OPEN],
+      ["V-05-2", "user", "I ordered a hot decaf latte. But this is iced, and it is regular."],
+      ["V-05-3", "staff", "I'm sorry. What would you like me to do?"],
+      ["V-05-5", "staff", "Sorry, I didn't catch that. Could you say that again?"],
+      ["V-05-6", "user", "A refund, please. I'm in a hurry."],
+      ["V-05-7", "staff", "Of course. I'll cancel this drink and give you a full refund, with no fee. Is that okay?"],
+      ["V-05-8", "user", "Yes, thank you."],
+      ["V-05-9", "staff", "Your full refund is done."]], [], true),
+    expected: all("met"), boundary: [], expectedHalf: { earned: 200, max: 200 } },
+];
+
+export interface CaseComparison {
+  caseId: string;
+  mismatches: { criterionId: string; expected: Verdict; actual: Verdict; boundary: boolean; reason: string }[];
+  agreed: number; total: number;
+}
+
+/** Per-criterion agreement with the case's candidate verdicts. Judgements are already schema-validated. */
+export function compareWithCase(testCase: MissionEvalCase, judgements: readonly CriterionJudgement[]): CaseComparison {
+  const byId = new Map(judgements.map(j => [j.criterionId, j]));
+  const mismatches: CaseComparison["mismatches"] = [];
+  for (const [criterionId, expected] of Object.entries(testCase.expected)) {
+    const actual = byId.get(criterionId);
+    if (!actual) throw new Error(`missing ${criterionId}`);
+    if (actual.verdict !== expected) mismatches.push({ criterionId, expected, actual: actual.verdict, boundary: testCase.boundary.includes(criterionId), reason: actual.reason });
+  }
+  const total = Object.keys(testCase.expected).length;
+  return { caseId: testCase.id, mismatches, agreed: total - mismatches.length, total };
+}
