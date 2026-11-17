@@ -352,8 +352,11 @@ export function compareWithCase(testCase: MissionEvalCase, judgements: readonly 
 // Boundary round (B-01~B-06): candidate totals 76.5~83.5 around the 80% threshold (PRD 4.5, DEC-080), fixed
 // 2026-11-16 before any run and never used for prompt tuning. No gaps: with one-decimal display, a rate shown as
 // 80.0% but below 80% would need an evaluated maximum of 200+ points, so it cannot occur on this rubric.
+// 2026-11-17 user review (DEC-093): B-01 sentence structure partial -> met (agreement errors count under stability,
+// not structure); B-02 kept. B-03's Yes-only rule was then written into the evaluation instruction, so B-01 and B-03
+// are no longer unseen holdout cases.
 export const BOUNDARY_EVAL_CASES: MissionEvalCase[] = [
-  { id: "B-01", title: "온도 미언급 재제조·시제·수일치 반복 오류(정확히 80)", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
+  { id: "B-01", title: "온도 미언급 재제조·시제·수일치 반복 오류(81.5, 수일치는 문장 구조 아님)", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
     snapshot: snap([["B-01-1", "staff", OPEN],
       ["B-01-2", "user", "Hi. I order a decaf latte, but this one have caffeine. The label say regular."],
       ["B-01-3", "staff", "I'm sorry about that. What would you like me to do?"],
@@ -361,9 +364,9 @@ export const BOUNDARY_EVAL_CASES: MissionEvalCase[] = [
       ["B-01-5", "staff", "Of course. I can remake it as a decaf latte at no extra charge. It will take about five minutes. Is that okay?"],
       ["B-01-6", "user", "Yes, five minutes is okay. I wait here."],
       ["B-01-7", "staff", "Great. I'll remake your decaf latte now."]]),
-    expected: all("met", { temperature_mismatch: "unmet", final_temperature_resolved: "unmet", grammar_meaning_relations: "partial", grammar_sentence_structure: "partial",
+    expected: all("met", { temperature_mismatch: "unmet", final_temperature_resolved: "unmet", grammar_meaning_relations: "partial",
       grammar_level_stability: "partial" }),
-    boundary: ["grammar_meaning_relations", "grammar_sentence_structure"], expectedHalf: { earned: 160, max: 200 } },
+    boundary: ["grammar_meaning_relations", "grammar_sentence_structure"], expectedHalf: { earned: 163, max: 200 } },
   { id: "B-02", title: "카페인 미언급·시제 반복 오류·부정확한 온도 단어(79.5)", languageLevel: "B1", missionMode: "real", missionEndReason: "goal_completed", finalRouteId: "remake",
     snapshot: snap([["B-02-1", "staff", OPEN],
       ["B-02-2", "user", "Hi. I order a hot latte, but you give me a cool one."],

@@ -32,7 +32,8 @@ const t = (n: number, role: Turn["role"], text: string): Turn => ({ turnId: `c${
 const GREETING = t(1, "assistant", "Hi. How can I help?");
 type Expectation =
   | { kind: "ask_without_proposing" }
-  | { kind: "requested_route_only"; route: "remake" | "refund" };
+  | { kind: "requested_route_only"; route: "remake" | "refund" }
+  | { kind: "reask_after_reason" };
 // None of these learner wordings appear in eval-mission-partner.ts or were used while tuning the instruction.
 const SCENARIOS: { id: string; title: string; turns: Turn[]; expect: Expectation }[] = [
   { id: "np-short", title: "문제만 말함(짧은 쉬운 문장 셋)", expect: { kind: "ask_without_proposing" },
@@ -48,11 +49,16 @@ const SCENARIOS: { id: string; title: string; turns: Turn[]; expect: Expectation
     turns: [GREETING, t(2, "user", "This should be a hot decaf latte, but it's iced and has caffeine. I'd just like my money back, please.")] },
   { id: "req-remake", title: "처음부터 재제조를 요청함(새 표현)", expect: { kind: "requested_route_only", route: "remake" },
     turns: [GREETING, t(2, "user", "Sorry, I got an iced regular latte, but I ordered a hot decaf one. Can you make it again, hot and decaf?")] },
+  // DEC-093: after options, a reason without a named route must not be narrowed to one route.
+  { id: "reason-only", title: "선택지 안내 뒤 사정만 말함", expect: { kind: "reask_after_reason" },
+    turns: [GREETING, t(2, "user", "Excuse me, my drink is wrong. It's cold and it has caffeine."),
+      t(3, "assistant", "I'm sorry about that. What would you like me to do?"), t(4, "user", "Hmm, what can you do?"),
+      t(5, "assistant", "We can make a new one. Or we can give you a refund. Which one?"), t(6, "user", "Well, my bus leaves soon.")] },
 ];
 const only = process.env.TALKIE_PARTNER_EVAL_ONLY?.split(",");
 const selectedScenarios = SCENARIOS.filter(s => !only || only.includes(s.id));
 
-const REMAKE = /\bremake|\bmake (?:you |it )?(?:a )?(?:new|another|fresh)|\bmake (?:it|one) again|\bnew (?:one|drink|latte)|\breplace|\banother (?:one|drink|latte)/i;
+const REMAKE = /\bremak|\bremade|\bmake (?:you |it )?(?:a )?(?:new|another|fresh)|\bmake (?:it|one) again|\bnew (?:one|drink|latte)|\breplace|\banother (?:one|drink|latte)/i;
 const REFUND = /\brefund|\bcancel|\bmoney back|\bpay you back|\breturn (?:your|the) (?:money|payment)/i;
 const DECIDED = /\bI(?:'ll| will) (?:go ahead and )?(?:remake|cancel|refund|make|get|prepare|process|give)|\blet me (?:remake|cancel|refund|make|get|process)|\bwe(?:'ll| will) (?:remake|cancel|refund|make|process|give)/i;
 const CONDITIONS: Record<"remake" | "refund", RegExp> = {
@@ -66,6 +72,10 @@ function classify(scenario: (typeof SCENARIOS)[number], text: string, events: { 
   if (scenario.expect.kind === "ask_without_proposing") {
     if (remake || refund || kinds.includes("proposed")) problems.push(remake && refund ? "unasked_options" : "unasked_proposal");
     if (DECIDED.test(text) || kinds.includes("staff_confirmed")) problems.push("decided_for_learner");
+  } else if (scenario.expect.kind === "reask_after_reason") {
+    if (remake !== refund || kinds.includes("proposed")) problems.push("narrowed_to_one");
+    if (DECIDED.test(text) || kinds.includes("staff_confirmed") || kinds.includes("user_accepted")) problems.push("decided_for_learner");
+    if (!text.includes("?")) problems.push("no_question");
   } else {
     const route = scenario.expect.route, other = route === "remake" ? "refund" : "remake";
     if (route === "refund" ? remake : refund) problems.push("other_route_offered");
@@ -146,7 +156,7 @@ const shape: Record<string, ReturnType<typeof shapeOf>> = {};
 const shapeByKind: Record<string, Record<string, ReturnType<typeof shapeOf>>> = {};
 for (const level of levels) {
   shape[level] = shapeOf(ok.filter(r => r.level === level).map(r => r.text!));
-  for (const kind of ["ask_without_proposing", "requested_route_only"]) {
+  for (const kind of ["ask_without_proposing", "requested_route_only", "reask_after_reason"]) {
     const ids = new Set(selectedScenarios.filter(s => s.expect.kind === kind).map(s => s.id));
     (shapeByKind[kind] ??= {})[level] = shapeOf(ok.filter(r => r.level === level && ids.has(r.scenario)).map(r => r.text!));
   }

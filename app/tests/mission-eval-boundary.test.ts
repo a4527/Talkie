@@ -21,7 +21,7 @@ describe("mission evaluation boundary cases (B-01~B-06)", () => {
   it("candidate verdicts give the fixed totals, all within 76~84 and on the intended side of 80%", () => {
     const scores = BOUNDARY_EVAL_CASES.map(c => scoreEvaluation(judge(c), mission.rubric));
     expect(scores.map(s => ({ earned: s.totalEarnedHalf, max: s.totalMaxHalf }))).toEqual(BOUNDARY_EVAL_CASES.map(c => c.expectedHalf));
-    expect(scores.map(s => s.totalEarnedHalf / 2)).toEqual([80, 79.5, 80, 82, 76.5, 83.5]);
+    expect(scores.map(s => s.totalEarnedHalf / 2)).toEqual([81.5, 79.5, 80, 82, 76.5, 83.5]);
     expect(scores.map(s => s.meetsThreshold)).toEqual([true, false, true, true, false, true]);
   });
   it("79.5/100 is below the threshold although it is the closest rate under 80 without exclusions", () => {
