@@ -227,6 +227,45 @@ describe("mission realtime providers", () => {
     expect(await cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, { definition, missionMode: "practice", languageLevel: "B1" }))
       .toEqual({ text: body.text, learningResult: { original: "Yes", learningState: "conversation", replacement: undefined, explanation: undefined, retryOutcome: undefined } });
   });
+  it("pins the cascade output shape with a response schema and keeps the 2026-11-16 confirmation miss as a regression", async () => {
+    vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000"); vi.stubEnv("TALKIE_VOICE_CASCADE_TEST", "enabled"); vi.stubEnv("SONIOX_API_KEY", "s"); vi.stubEnv("GOOGLE_API_KEY", "g");
+    // Raw reply from the 2026-11-16 real-mode run: acceptance put in `progress`, so the whole report (and its confirmation) was dropped.
+    const missed = "{\n  \"text\": \"Great, I'll get that hot decaf latte started for you right away. Thank you for your patience!\",\n  \"missionReport\": {\n    \"routeEvents\": [\n      {\n        \"kind\": \"staff_confirmed\",\n        \"routeId\": \"remake\"\n      }\n    ],\n    \"progress\": \"user_accepted\"\n  }\n}";
+    const reply = (text: string) => async () => Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
+    const request = vi.fn(reply(missed));
+    const snapshot = { turns: [{ turnId: "u", requestId: "u", role: "user" as const, text: "Yes, that's fine. I can wait five minutes." }], corrections: [], learningState: "conversation" as const };
+    const real = { definition, missionMode: "real" as const, languageLevel: "B1" as const };
+    expect((await cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, real)).missionReport).toBeUndefined();
+    const schema = JSON.parse((request.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).generationConfig.responseSchema;
+    expect(schema.required).toEqual(["text", "missionReport"]);
+    expect(schema.properties.learningResult).toBeUndefined(); // Real mode has no corrections.
+    const report = schema.properties.missionReport;
+    expect(report.required).toEqual(["routeEvents", "progress"]);
+    expect(report.properties.progress.enum).toEqual(["progress", "no_progress", "excluded"]);
+    expect(report.properties.routeEvents.items.properties.kind.enum).toEqual(["proposed", "user_accepted", "staff_confirmed", "route_changed"]);
+    expect(report.properties.routeEvents.items.properties.routeId.enum).toEqual(definition.routes.map(r => r.routeId));
+    // Practice: no progress key; corrections are allowed. Closing: text only.
+    await cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, { ...real, missionMode: "practice" });
+    const practice = JSON.parse((request.mock.calls[1] as unknown as [string, RequestInit])[1].body as string).generationConfig.responseSchema;
+    expect(practice.properties.missionReport.required).toEqual(["routeEvents"]);
+    expect(practice.properties.missionReport.properties.progress).toBeUndefined();
+    expect(practice.properties.learningResult.properties.learningState.enum).toEqual(["conversation", "retry"]);
+    expect(practice.properties.learningResult.required).toEqual(["original", "errorFound", "learningState"]);
+    expect(practice.properties.learningResult.propertyOrdering.slice(0, 3)).toEqual(["original", "errorFound", "replacement"]);
+    expect(practice.required).toEqual(["text", "learningResult", "missionReport"]);
+    expect(practice.propertyOrdering).toEqual(["learningResult", "text", "missionReport"]);
+    await cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, real, "no_progress");
+    expect(JSON.parse((request.mock.calls[2] as unknown as [string, RequestInit])[1].body as string).generationConfig.responseSchema).toEqual({ type: "OBJECT", properties: { text: { type: "STRING" } }, required: ["text"], propertyOrdering: ["text"] });
+    // The same turn in the schema's shape completes the route through the shared validator.
+    request.mockImplementationOnce(reply(JSON.stringify({ text: "Great, I'll get that started.", missionReport: { routeEvents: [ev("user_accepted"), ev("staff_confirmed")], progress: "progress" } })));
+    const fixed = (await cascadeText(snapshot, undefined, true, new AbortController().signal, request, undefined, real)).missionReport!;
+    const records = new VoiceLearningRecords(undefined, { missionMode: "real", ...routes });
+    staffOpening(records);
+    exchange(records, 1, { routeEvents: [], progress: "progress" });
+    exchange(records, 2, { routeEvents: [ev("proposed")], progress: "progress" });
+    exchange(records, 3, fixed);
+    expect(records.getMissionOutcome()).toEqual({ reason: "goal_completed", routeId: "remake" });
+  });
   it("locks the mission instruction into the token and returns only the mode to the browser", async () => {
     vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000");
     vi.mocked(getVoiceLearningContext).mockResolvedValue({ userId: "synthetic-user", priorLearningContext: { reviewExpressions: [] }, mission: { definition, missionMode: "practice", languageLevel: "A2" } });
@@ -239,6 +278,41 @@ describe("mission realtime providers", () => {
     const [, , learning, mission] = vi.mocked(issueVoiceToken).mock.calls[0];
     expect(learning).toBe(true);
     expect(mission).toEqual({ missionMode: "practice", instruction: createMissionInstruction(definition, "practice", "A2") });
+  });
+});
+
+describe("practice corrections pause the role play (DEC-092)", () => {
+  it("ignores route events on a reply that delivers a correction, and applies them after the retry", () => {
+    const records = new VoiceLearningRecords(undefined, { missionMode: "practice", ...routes });
+    staffOpening(records);
+    exchange(records, 1, { routeEvents: [ev("proposed")] });
+    // The learner accepts with an error; the reply only corrects and asks for a retry, but reports acceptance and confirmation.
+    records.apply({ type: "transcript", role: "user", turnId: "u2", text: "Yes, is okay." }); records.apply({ type: "input-complete", turnId: "u2" });
+    records.apply({ type: "learning-result", turnId: "a2", inputTurnId: "u2", result: { original: "Yes, is okay.", learningState: "retry", replacement: "Yes, it's okay." } });
+    records.apply({ type: "mission-report", turnId: "a2", inputTurnId: "u2", report: { routeEvents: [ev("user_accepted"), ev("staff_confirmed")] } });
+    records.apply({ type: "transcript", role: "assistant", turnId: "a2", text: 'Quick tip: "Yes, it\'s okay." Can you say it again?' });
+    records.apply({ type: "response-complete", turnId: "a2", inputTurnId: "u2" }); records.apply({ type: "played", turnId: "a2" });
+    expect(records.getSnapshot().corrections).toHaveLength(1);
+    expect(records.getMissionOutcome()).toBeUndefined();
+    expect(records.getSnapshot().missionProgress?.routeEvents.map(e => e.kind)).toEqual(["proposed"]);
+    records.apply({ type: "transcript", role: "user", turnId: "u3", text: "Yes, it's okay." }); records.apply({ type: "input-complete", turnId: "u3" });
+    records.apply({ type: "learning-result", turnId: "a3", inputTurnId: "u3", result: { original: "Yes, it's okay.", learningState: "conversation", retryOutcome: "success" } });
+    records.apply({ type: "mission-report", turnId: "a3", inputTurnId: "u3", report: { routeEvents: [ev("user_accepted"), ev("staff_confirmed")] } });
+    records.apply({ type: "transcript", role: "assistant", turnId: "a3", text: "Great! I'll remake it now." });
+    records.apply({ type: "response-complete", turnId: "a3", inputTurnId: "u3" }); records.apply({ type: "played", turnId: "a3" });
+    expect(records.getSnapshot().corrections[0].attempts).toEqual([{ turnId: "u3", outcome: "success" }]);
+    expect(records.getMissionOutcome()).toEqual({ reason: "goal_completed", routeId: "remake" });
+  });
+  it("keeps route events on an uncorrected practice reply and when the correction is not spoken", () => {
+    const records = new VoiceLearningRecords(undefined, { missionMode: "practice", ...routes });
+    staffOpening(records);
+    records.apply({ type: "transcript", role: "user", turnId: "u1", text: "Remake, please." }); records.apply({ type: "input-complete", turnId: "u1" });
+    records.apply({ type: "learning-result", turnId: "a1", inputTurnId: "u1", result: { original: "Remake, please.", learningState: "retry", replacement: "Could you remake it, please?" } });
+    records.apply({ type: "mission-report", turnId: "a1", inputTurnId: "u1", report: { routeEvents: [ev("proposed")] } });
+    records.apply({ type: "transcript", role: "assistant", turnId: "a1", text: "Sure, it is free and takes five minutes. Okay?" });
+    records.apply({ type: "response-complete", turnId: "a1", inputTurnId: "u1" }); records.apply({ type: "played", turnId: "a1" });
+    expect(records.getSnapshot().corrections).toHaveLength(0);
+    expect(records.getSnapshot().missionProgress?.routeEvents.map(e => e.kind)).toEqual(["proposed"]);
   });
 });
 

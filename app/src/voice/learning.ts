@@ -77,7 +77,10 @@ export class VoiceLearningRecords {
     }
     if (this.mission) {
       this.mission.confirmTurn(turn);
-      if (turn.role === "assistant") this.mission.commit(turn.turnId, entry.inputTurnId, entry.missionReport);
+      // A practice reply that delivers a correction pauses the role play (DEC-092), so its route events are not applied.
+      const correctionReply = this.missionConfig?.missionMode === "practice" && corrections.some(c => c.deliveredTurnId === turn.turnId);
+      const report = correctionReply && entry.missionReport ? { ...entry.missionReport, routeEvents: [] } : entry.missionReport;
+      if (turn.role === "assistant") this.mission.commit(turn.turnId, entry.inputTurnId, report);
     }
     const bounded = boundRecords([...this.snapshot.turns, turn], corrections, 128 * 1024);
     this.snapshot = this.withMission({ turns: bounded.turns, corrections: bounded.corrections, learningState, hasConversationGaps: this.snapshot.hasConversationGaps === true || bounded.removed.some(id => !this.acknowledged.has(id)) });

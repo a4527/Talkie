@@ -48,8 +48,12 @@ interface Expect {
   /** The reply should move on rather than insist on a repeat. */
   proceedsWithoutRetry?: boolean;
 }
-interface ScriptTurn { text: string; expect: Expect; /** Sent only if the mission has not ended yet (fixed fallback). */ ifNotEnded?: boolean }
-interface Dialogue { id: string; title: string; level: LanguageLevel; turns: ScriptTurn[]; expectEnd: "goal_completed"; route: "remake" | "refund" }
+interface ScriptTurn { text: string; expect: Expect; /** Sent only if the mission has not ended yet (fixed fallback). */ ifNotEnded?: boolean;
+  /** Inserted by the harness after a retry request: the learner's attempt and the role checks deferred from the corrected turn. */
+  retryOf?: { outcome: "success" | "failure"; correctionTurnEvents: string[] } }
+/** How the scripted learner answers a retry request: repeat the correction, repeat the original error, or ignore it and continue. */
+type RetryBehavior = "repeat" | "fail" | "skip";
+interface Dialogue { id: string; title: string; level: LanguageLevel; turns: ScriptTurn[]; expectEnd: "goal_completed"; route: "remake" | "refund"; retry?: RetryBehavior }
 
 const NO_CLOSE: Kind[] = ["user_accepted", "staff_confirmed"];
 const remakeGrammar = (level: LanguageLevel): Dialogue => ({
@@ -67,6 +71,13 @@ const remakeGrammar = (level: LanguageLevel): Dialogue => ({
 });
 const DIALOGUES: Dialogue[] = [
   remakeGrammar("A1"), remakeGrammar("B1"), remakeGrammar("C"),
+  { id: "f-retry-fail-B1", title: "(f) 다시 말하기에서 같은 오류를 반복해도 역할극으로 복귀", level: "B1", route: "refund", expectEnd: "goal_completed", retry: "fail", turns: [
+    { text: "Hi. My drink is wrong. I order a hot decaf latte, but this is iced and regular.",
+      expect: { note: "교정 하나(order→ordered)·다시 말하기 요청. 시도 실패 뒤 다시 시키지 않고 사과·원하는 처리 질문으로 복귀.", correction: "expected", noUnaskedOptions: true, forbiddenEvents: ["proposed", ...NO_CLOSE] } },
+    { text: "I'd like a refund, please.", expect: { note: "환불 조건 안내·괜찮은지 물음.", conditionsNoConfirm: true, requiredEvents: ["proposed"], forbiddenEvents: NO_CLOSE } },
+    { text: "Yes, that's fine.", expect: { note: "확정·마무리, 자동 종료.", requiredEvents: ["user_accepted", "staff_confirmed"] } },
+    { text: "Yes, please cancel it and refund me.", ifNotEnded: true, expect: { note: "(대체 턴) 동의→확정.", requiredEvents: ["user_accepted", "staff_confirmed"] } },
+  ] },
   { id: "b-help-refund-B1", title: "(b) 중간에 '환불'을 영어로 묻는 도움 요청", level: "B1", route: "refund", expectEnd: "goal_completed", turns: [
     { text: "Hi, I ordered a hot decaf latte, but this one is iced and it's regular coffee.",
       expect: { note: "사과·원하는 처리 질문. 선택지 먼저 꺼내지 않음.", noUnaskedOptions: true, forbiddenEvents: ["proposed", ...NO_CLOSE] } },
@@ -91,7 +102,7 @@ const DIALOGUES: Dialogue[] = [
     { text: "Yes. Okay.", expect: { note: "확정·마무리, 자동 종료.", requiredEvents: ["user_accepted", "staff_confirmed"] } },
     { text: "Yes, okay. I can wait five minutes.", ifNotEnded: true, expect: { note: "(대체 턴) 동의→확정.", requiredEvents: ["user_accepted", "staff_confirmed"] } },
   ] },
-  { id: "d-no-retry-C", title: "(d) 교정 뒤 다시 말하기를 하지 않고 진행", level: "C", route: "remake", expectEnd: "goal_completed", turns: [
+  { id: "d-no-retry-C", title: "(d) 교정 뒤 다시 말하기를 하지 않고 진행", level: "C", route: "remake", expectEnd: "goal_completed", retry: "skip", turns: [
     { text: "Hi, I was ordered a hot decaf latte, but this is iced and have caffeine.",
       expect: { note: "교정 하나(I was ordered→I ordered 등). 다시 말하기 요청 가능. 선택지 먼저 꺼내지 않음.", correction: "expected", noUnaskedOptions: true, forbiddenEvents: ["proposed", ...NO_CLOSE] } },
     { text: "Can I just get a new one made?",
@@ -219,7 +230,7 @@ interface TurnRecord {
   outcomeAfter?: unknown; problems: string[]; error?: string;
 }
 
-async function runConversation(id: string, level: LanguageLevel, history: Turn[], learnerTurns: ScriptTurn[]) {
+async function runConversation(id: string, level: LanguageLevel, history: Turn[], learnerTurns: ScriptTurn[], retry: RetryBehavior = "repeat") {
   const restored: ConversationSnapshot = { turns: history, corrections: [], learningState: "conversation" };
   const records = new VoiceLearningRecords(restored, { missionMode: "practice", routeIds: mission!.definition.routes.map(r => r.routeId) });
   let sttEmit: ((event: RecognitionEvent) => void) | undefined;
@@ -249,7 +260,9 @@ async function runConversation(id: string, level: LanguageLevel, history: Turn[]
 
   const out: TurnRecord[] = [];
   let ended: string | undefined, failure: string | undefined;
-  for (const [index, script] of learnerTurns.entries()) {
+  const queue = [...learnerTurns];
+  for (let index = 0; index < queue.length; index++) {
+    const script = queue[index];
     // Fixed fallback turns sit at the end of a script, so they are reached only while the mission is still open.
     if (records.getMissionOutcome()) break;
     current = { captures: [] };
@@ -264,7 +277,7 @@ async function runConversation(id: string, level: LanguageLevel, history: Turn[]
     const snap = records.getSnapshot();
     const userTurn = snap.turns.findLast(t => t.role === "user");
     const reply = end.type === "response-complete" ? snap.turns.at(-1) : undefined;
-    const rec: TurnRecord = { index, learner: script.text, fallbackTurn: script.ifNotEnded === true, expect: script.expect, raw: current.captures,
+    const rec: TurnRecord = { index, learner: (script.retryOf ? "[retry] " : "") + script.text, fallbackTurn: script.ifNotEnded === true, expect: script.expect, raw: current.captures,
       correction: { offered: false, acceptedByApp: false }, reportProvided: false, committedEvents: [], problems: [] };
     if (!reply || reply.role !== "assistant") {
       rec.error = end.type === "error" ? `adapter_${end.code}` : end.type;
@@ -291,7 +304,27 @@ async function runConversation(id: string, level: LanguageLevel, history: Turn[]
     rec.committedEvents = (snap.missionProgress?.routeEvents ?? []).filter(e => !eventsBefore.has(e.eventId)).map(e => `${e.kind}:${e.routeId}`);
     rec.outcomeAfter = records.getMissionOutcome();
     const kinds = rec.committedEvents.map(e => e.split(":")[0] as Kind);
-    rec.problems = label(script.expect, reply.text, kinds, rec.correction.acceptedByApp, rec.correction.offered);
+    // A retry request pauses the role: the turn is judged only on the correction, and its role checks move to the attempt.
+    const retryAsked = !script.retryOf && snap.learningState === "retry" && rec.correction.acceptedByApp;
+    if (retryAsked) {
+      rec.problems = label({ note: script.expect.note, correction: script.expect.correction ?? "expected", forbiddenEvents: ["proposed", "staff_confirmed"] }, reply.text, kinds, true, true);
+      const replacement = (parsedLR as { replacement: string }).replacement;
+      if (/quick tip|say it again/i.test(replacement)) rec.problems.push("replacement_not_sentence");
+      // A learner repeats what they heard in quotes, not the whole tip line.
+      const heard = replacement.match(/"([^"]+)"/)?.[1] ?? replacement;
+      if (retry !== "skip") queue.splice(index + 1, 0, { text: retry === "fail" ? script.text : heard,
+        expect: { ...script.expect, correction: undefined }, retryOf: { outcome: retry === "fail" ? "failure" : "success", correctionTurnEvents: rec.committedEvents } });
+    } else if (script.retryOf) {
+      const all = [...script.retryOf.correctionTurnEvents, ...rec.committedEvents].map(e => e.split(":")[0] as Kind);
+      rec.problems = label(script.expect, reply.text, all, false, false);
+      const last = snap.corrections.at(-1), attempt = last?.attempts.find(a => a.turnId === userTurn?.turnId);
+      if (!attempt) rec.problems.push("retry_outcome_missing");
+      else if (attempt.outcome !== script.retryOf.outcome) rec.problems.push(`retry_outcome_${attempt.outcome}`);
+      if (snap.learningState !== "conversation") rec.problems.push("still_retry");
+      if (rec.correction.offered) rec.problems.push("correction_on_attempt");
+    } else rec.problems = label(script.expect, reply.text, kinds, rec.correction.acceptedByApp, rec.correction.offered);
+    if (!retryAsked && !script.retryOf && snap.learningState === "retry") rec.problems.push("retry_state_without_correction");
+    if (retry === "skip" && before.learningState === "retry" && /^\W*(?:great|good job|perfect|well done)\b/i.test(reply.text)) rec.problems.push("praised_skipped_retry");
     out.push(rec);
     console.log(`${id} t${index}${script.ifNotEnded ? "*" : ""}: ${rec.problems.join(",") || "ok"} | ev=[${rec.committedEvents.join(" ")}] corr=${rec.correction.offered ? (rec.correction.acceptedByApp ? "accepted" : `rejected(${rec.correction.whyRejected})`) : "-"} | ${reply.text.replace(/\s+/g, " ").slice(0, 200)}`);
     const outcome = records.getMissionOutcome();
@@ -310,7 +343,7 @@ let transcript = "";
 try {
   for (const d of DIALOGUES.filter(d => !only || only.includes(d.id))) {
     console.log(`== ${d.id} (${d.level}) ${d.title}`);
-    const { turns, ended, failure, finalSnapshot, appEvents } = await runConversation(d.id, d.level, [], d.turns);
+    const { turns, ended, failure, finalSnapshot, appEvents } = await runConversation(d.id, d.level, [], d.turns, d.retry);
     results.push({ kind: "dialogue", id: d.id, title: d.title, level: d.level, expectedEnd: d.expectEnd, expectedRoute: d.route, ended: ended ?? "not_ended", failure, turns, finalSnapshot, appEvents });
     writeFileSync(`${outDir}/${d.id}.json`, JSON.stringify(results.at(-1), null, 2));
     transcript += `\n## ${d.id} (${d.level}) ${d.title}\n` + turns.map(t => `L${t.index}${t.fallbackTurn ? "*" : ""}: ${t.learner}\nS: ${t.reply ?? `<${t.error}>`}\n   events=[${t.committedEvents.join(" ")}] correction=${t.correction.offered ? JSON.stringify((t.learningResult?.parsed as { replacement?: string })?.replacement) + (t.correction.acceptedByApp ? " accepted" : ` rejected(${t.correction.whyRejected})`) : "-"} state=${t.learningStateAfter} problems=${t.problems.join(",") || "ok"}`).join("\n") + `\n=> ended: ${ended ?? "not_ended"}${failure ? ` failure=${failure}` : ""}\n`;
@@ -318,7 +351,7 @@ try {
   }
   for (const s of SINGLES.filter(s => !only || only.includes(s.id))) {
     console.log(`== ${s.id} (${s.level}) ${s.title}`);
-    const r = await runConversation(s.id, s.level, s.history, [{ text: s.last, expect: s.expect }]);
+    const r = await runConversation(s.id, s.level, s.history, [{ text: s.last, expect: s.expect }], "skip");
     results.push({ kind: "single", id: s.id, title: s.title, level: s.level, ended: r.ended ?? "not_ended", failure: r.failure, turns: r.turns, history: s.history });
     writeFileSync(`${outDir}/${s.id}.json`, JSON.stringify(results.at(-1), null, 2));
     const t = r.turns[0];

@@ -45,6 +45,22 @@ export function createMissionStateToolDeclaration(missionMode: MissionMode) {
   };
 }
 
+/**
+ * Response schema for the cascade text path, which has no tool call: the same report shape with the
+ * allowed values enforced by the provider (route IDs from the fixed definition, progress required in real mode).
+ */
+export function createMissionReportSchema(missionMode: MissionMode, routeIds: readonly string[]) {
+  return {
+    type: "OBJECT",
+    properties: {
+      routeEvents: { type: "ARRAY", maxItems: 4, items: { type: "OBJECT", properties: {
+        kind: { type: "STRING", enum: [...MISSION_ROUTE_EVENT_KINDS] }, routeId: { type: "STRING", enum: [...routeIds] } }, required: ["kind", "routeId"] } },
+      ...(missionMode === "real" ? { progress: { type: "STRING", enum: [...MISSION_PROGRESS_SIGNALS] } } : {}),
+    },
+    required: missionMode === "real" ? ["routeEvents", "progress"] : ["routeEvents"],
+  };
+}
+
 /** Strict structural parser for provider output. Undefined means the whole report is ignored. */
 export function parseMissionStateReport(value: unknown): MissionStateReport | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
