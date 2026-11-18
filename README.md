@@ -101,6 +101,8 @@ TALKIE_STORAGE_E2E=1 APP_ORIGIN=http://127.0.0.1:3100 npm run test:e2e -- storag
 
 배포 전 로컬 통합 확인은 `npm run test:predeploy:e2e`로 실행한다. 두 로컬 PostgreSQL과 Mailpit, Chromium 실행 라이브러리, 무료 Gemini 시험 설정이 필요하다. 실제 백업·복원 시험까지 실행하려면 PostgreSQL 16의 `pg_dump`·`pg_restore`가 있는 디렉터리를 `PG_BIN_DIR`로 지정한다. 명령은 각 PostgreSQL에 `talkie_test_predeploy_*` 임시 DB를 만들어 마이그레이션·서버 시험·프로덕션 빌드·PC/모바일 브라우저 시험·실제 Gemini 연결 스모크를 순서대로 실행하고 임시 DB를 삭제한다. 일반 DB URL이나 원격 DB URL은 거부한다. 브라우저 시험은 실제 HTTP·SMTP·DB를 사용하지만 음성 공급자 응답은 가짜로 대체한다. 실제 공급자 스모크는 고정 합성 문장에 대한 연결·음성/전사 수신만 확인하며 장치 청취·전체 저장 학습을 자동 확인하지 않는다.
 
+탈퇴 전 백업을 복원할 때 삭제 상태를 다시 적용하는 로컬 훈련은 `app/`에서 `bash scripts/drill-backup-deletion-reapply.sh`로 실행한다. Docker의 휘발성 PostgreSQL 두 개와 합성 계정으로 확인하며 훈련 종료 시 사본을 폐기한다. [백업·복원 설계](docs/design/LOCAL-OPERATIONS.md#백업과-복원-경계)
+
 브라우저 시험은 실행 중인 두 시험 DB·SMTP가 필요합니다. Mailpit API 기본값은 `http://127.0.0.1:18025`이며 Compose를 쓰면 `MAILPIT_TEST_ORIGIN=http://127.0.0.1:8025`로 지정합니다. 단위 테스트는 `npm test`, 변경 SQL 생성은 `npm run db:generate`입니다. 생성 SQL을 검토한 뒤 적용하며 앱 요청/개발 서버 시작 때 스키마를 자동 변경하지 않습니다.
 
 ## DB에서 원문 생성·삭제 확인

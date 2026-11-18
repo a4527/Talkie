@@ -76,6 +76,7 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       await tx.execute(sql`insert into transcript_versions(session_id,version,digest,payload) values (${id},2,'unchanged-snapshot-hash',${JSON.stringify(record())}::jsonb)`);
       await tx.execute(sql`insert into transcript_lifecycle(session_id,user_id,created_at,first_saved_at,deleted_at,deletion_reason) values (${deletedSourceId},${userId},${knownCreatedAt.toISOString()},${knownCreatedAt.toISOString()},${knownDeletedAt.toISOString()},'note_saved')`);
       await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0002_clear_session_state.sql", "utf8").replaceAll('"public".', '"test_transcript_migration".')));
+      await tx.execute(sql.raw(readFileSync("drizzle/transcripts/0003_discarded_unconfirmed_save.sql", "utf8")));
       assert.deepEqual((await tx.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, id)))[0].transcriptDeleteDeadlineAt, deadline);
       const [legacy] = await tx.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, id));
       assert.equal(legacy.learningSessionId, id);
@@ -83,6 +84,7 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.equal(legacy.firstNonemptySaveAt, null);
       assert.equal(legacy.sourceDeletedAt, null);
       assert.equal(legacy.sourceDeletionReason, null);
+      assert.equal(legacy.hasDiscardedUnconfirmedSave, false);
       const [saved] = await tx.select().from(transcriptSaves);
       assert.equal(saved.saveSequenceNumber, 2);
       assert.equal(saved.snapshotHash, 'unchanged-snapshot-hash');
@@ -525,6 +527,58 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.equal((await result(d.s.learningSessionId)).evaluationStatus, "skipped");
       await assert.rejects(databases().records.update(learningMissionResults).set({ evaluationStatus: "ready" }).where(eq(learningMissionResults.learningSessionId, d.s.learningSessionId)),
         postgresFailure("23514", "learning_mission_result_scores"), "A ready result needs its scores");
+
+      for (const path of ["request", "maintenance"]) {
+        const late = await ended(`in-flight-${path}@example.test`);
+        const id = late.s.learningSessionId;
+        assert.ok(await sourceRows(id) > 0);
+        let evaluationCalls = 0;
+        const evaluate: ExtractionGenerate = async (...args) => {
+          evaluationCalls++;
+          await databases().records.update(learningSessions)
+            .set({ transcriptDeleteDeadlineAt: new Date(Date.now() - 1000) }).where(eq(learningSessions.learningSessionId, id));
+          return evaluation(...args);
+        };
+        if (path === "request") {
+          await completeLearningNote(late.raw, id, { generate: note, evaluate });
+        } else {
+          const due = new Date(Date.now() - 1000);
+          await databases().records.update(learningSessions).set({ learningConnectionExpiresAt: due }).where(eq(learningSessions.learningSessionId, id));
+          await databases().records.update(scheduledJobs).set({ scheduledRunAt: due }).where(eq(scheduledJobs.targetLearningSessionId, id));
+          assert.equal((await maintenance({ generate: note, evaluate })).failures, 0);
+        }
+        assert.equal(evaluationCalls, 1, `Evaluation must be in flight via ${path}`);
+        const expired = await result(id);
+        assert.equal(expired.evaluationStatus, "unavailable", `Late evaluation via ${path}`);
+        assert.equal(expired.totalEarnedHalf, null);
+        assert.equal((await databases().records.select().from(learningMissionResultDetails).where(eq(learningMissionResultDetails.learningSessionId, id))).length, 0);
+        assert.equal((await listLearningRecords(late.raw)).notes.length, 0, "A late note must not be saved");
+        assert.equal(await sourceRows(id), 0);
+        const [lifecycle] = await databases().transcripts.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, id));
+        assert.equal(lifecycle.sourceDeletionReason, "deadline_expired");
+      }
+
+      const interruptedCommit = await ended("evaluation-commit@example.test");
+      const id = interruptedCommit.s.learningSessionId;
+      await assert.rejects(completeLearningNote(interruptedCommit.raw, id, { generate: note, evaluate: down }), /NOTE_PENDING/);
+      const db = databases().records;
+      await db.execute(sql`create function reject_test_evaluation_commit() returns trigger language plpgsql as $test$
+        begin raise exception 'SIMULATED_EVALUATION_COMMIT_FAILURE'; end $test$`);
+      try {
+        await db.execute(sql`create constraint trigger reject_test_evaluation_commit after insert on learning_mission_result_details
+          deferrable initially deferred for each row execute function reject_test_evaluation_commit()`);
+        await assert.rejects(completeLearningNote(interruptedCommit.raw, id, { generate: down, evaluate: evaluation }),
+          postgresFailure("P0001", "SIMULATED_EVALUATION_COMMIT_FAILURE"));
+        assert.equal((await result(id)).evaluationStatus, "pending");
+        assert.ok(await sourceRows(id) > 0, "A failed evaluation commit must retain the source");
+        assert.equal((await listLearningRecords(interruptedCommit.raw)).notes.length, 1, "A settled note survives the evaluation failure");
+      } finally {
+        await db.execute(sql`drop trigger if exists reject_test_evaluation_commit on learning_mission_result_details`);
+        await db.execute(sql`drop function reject_test_evaluation_commit()`);
+      }
+      await completeLearningNote(interruptedCommit.raw, id, { generate: down, evaluate: evaluation });
+      assert.equal((await result(id)).evaluationStatus, "ready");
+      assert.equal(await sourceRows(id), 0);
     } finally {
       for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;
@@ -675,6 +729,29 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     assert.ok(legacy.sourceDeletedAt);
     assert.equal(legacy.sourceDeletionReason, "note_saved");
   });
+  it("recovers each pool after a checked-out database connection is terminated", { timeout: 5000 }, async () => {
+    const { recordsPool, transcriptsPool } = databases();
+    for (const pool of [recordsPool, transcriptsPool]) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const { rows: [{ pid }] } = await client.query<{ pid: number }>("select pg_backend_pid() as pid");
+        // Listen for socket closure so the production error listener handles the driver error.
+        const disconnected = new Promise<void>(resolve => client.once("end", resolve));
+        const { rows: [{ terminated }] } = await pool.query<{ terminated: boolean }>(
+          "select pg_terminate_backend($1) as terminated", [pid],
+        );
+        assert.equal(terminated, true);
+        await disconnected;
+        await assert.rejects(client.query("rollback"));
+      } finally {
+        client.release();
+      }
+      const { rows: [{ ready }] } = await pool.query<{ ready: number }>("select 1 as ready");
+      assert.equal(ready, 1);
+    }
+  });
+
   it("recovers a temporary-only commit without losing acknowledged state or duplicating the retried save", async () => {
     const raw = await login(), s = await startLearning(raw, "conversation");
     await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, record());
@@ -693,6 +770,71 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
     assert.equal(resumed.conversationSnapshot.turns.length, 2);
     await saveLearning(raw, s.learningSessionId, resumed.learningConnectionToken, 2, next);
     assert.equal((await databases().transcripts.select().from(transcriptSaves)).filter(v => v.saveSequenceNumber === 2).length, 1);
+  });
+  it("reclaims a temporary-only save after the client loses memory and reconnects, without using it as evidence", async () => {
+    const raw = await login(), s = await startLearning(raw, "conversation"), id = s.learningSessionId;
+    await saveLearning(raw, id, s.learningConnectionToken, 1, record());
+    const withSecondTurn = (text: string) => ({ ...record(), turns: [...record().turns, { turnId: "user-2", requestId: "request-2", role: "user", text }] });
+    const lost = withSecondTurn("unconfirmed lost marker"), fresh = withSecondTurn("fresh confirmed answer");
+    const savesAt = async (sequence: number) => (await databases().transcripts.select().from(transcriptSaves)
+      .where(and(eq(transcriptSaves.learningSessionId, id), eq(transcriptSaves.saveSequenceNumber, sequence))));
+    const confirmed = async () => (await databases().records.select().from(learningSessions).where(eq(learningSessions.learningSessionId, id)))[0].confirmedSaveSequenceNumber;
+    await databases().records.execute(sql`create function reject_test_confirmation() returns trigger language plpgsql as $$ begin if NEW.confirmed_save_sequence_number = 2 then raise exception 'SIMULATED_CONFIRM_FAILURE'; end if; return NEW; end $$`);
+    await databases().records.execute(sql`create trigger reject_test_confirmation before update on learning_sessions for each row execute function reject_test_confirmation()`);
+    try { await assert.rejects(saveLearning(raw, id, s.learningConnectionToken, 2, lost), postgresFailure("P0001", "SIMULATED_CONFIRM_FAILURE")); }
+    finally {
+      await databases().records.execute(sql`drop trigger reject_test_confirmation on learning_sessions`);
+      await databases().records.execute(sql`drop function reject_test_confirmation()`);
+    }
+    assert.equal(await confirmed(), 1);
+    assert.equal((await savesAt(2)).length, 1, "Sequence 2 is committed only in the temporary DB");
+    // On the same connection the unconfirmed upload keeps its content: a different payload is still rejected.
+    await assert.rejects(saveLearning(raw, id, s.learningConnectionToken, 2, fresh), /SAVE_SEQUENCE_CONFLICT/);
+    assert.equal(await confirmed(), 1);
+
+    // The client loses its memory window and reconnects; only confirmed state is restored.
+    await updateLearningHeartbeat(raw, id, s.learningConnectionToken, true);
+    const resumed = await startLearning(raw, "conversation");
+    assert.equal(resumed.confirmedSaveSequenceNumber, 1);
+    assert.deepEqual(resumed.conversationSnapshot.turns.map(t => t.turnId), ["user-1", "assistant-1"]);
+    assert.equal(resumed.conversationSnapshot.hasConversationGaps, true);
+    assert.equal(JSON.stringify(resumed.conversationSnapshot).includes("unconfirmed lost marker"), false);
+    assert.equal((await savesAt(2)).length, 0, "Connection rotation reclaims the stale unconfirmed upload");
+    assert.equal((await savesAt(1)).length, 1, "Confirmed history is untouched");
+
+    // The old connection can no longer write; the new connection's different sequence 2 is accepted once.
+    await assert.rejects(saveLearning(raw, id, s.learningConnectionToken, 2, lost), /CONNECTION_EXPIRED/);
+    assert.deepEqual(await saveLearning(raw, id, resumed.learningConnectionToken, 2, fresh), { confirmedSaveSequenceNumber: 2 });
+    assert.deepEqual(await saveLearning(raw, id, resumed.learningConnectionToken, 2, fresh), { confirmedSaveSequenceNumber: 2 }, "Identical retry stays idempotent");
+    await assert.rejects(saveLearning(raw, id, resumed.learningConnectionToken, 2, lost), /SAVE_SEQUENCE_CONFLICT/, "A confirmed sequence is never replaced");
+    const stored = await savesAt(2);
+    assert.equal(stored.length, 1);
+    assert.equal(JSON.stringify(stored[0].conversationSnapshot).includes("fresh confirmed answer"), true);
+
+    // A later reconnect and the note see only confirmed content.
+    await updateLearningHeartbeat(raw, id, resumed.learningConnectionToken, true);
+    const again = await startLearning(raw, "conversation");
+    assert.equal(again.confirmedSaveSequenceNumber, 2);
+    assert.equal(again.conversationSnapshot.hasConversationGaps, true, "Gap survives even if the client did not send the flag");
+    assert.deepEqual(again.conversationSnapshot.turns.find(t => t.turnId === "user-2")?.text, "fresh confirmed answer");
+    await endLearning(raw, id, again.learningConnectionToken);
+    await completeLearningNote(raw, id);
+    const [note] = (await listLearningRecords(raw)).notes;
+    assert.ok(note.noteMarkdown.includes("fresh confirmed answer"));
+    assert.ok(note.noteMarkdown.includes("일부 대화 기록이 누락됐습니다."));
+    assert.equal(note.noteMarkdown.includes("unconfirmed lost marker"), false);
+  });
+  it("keeps confirmed saves on rotation and rejects a stale-connection save racing the reconnect", async () => {
+    const raw = await login(), s = await startLearning(raw, "conversation"), id = s.learningSessionId;
+    await saveLearning(raw, id, s.learningConnectionToken, 1, record());
+    await updateLearningHeartbeat(raw, id, s.learningConnectionToken, true);
+    // A save racing the reconnect either fails on the expired connection or is confirmed before rotation.
+    const [late, resumed] = await Promise.allSettled([saveLearning(raw, id, s.learningConnectionToken, 2, record("racing marker")), startLearning(raw, "conversation")]);
+    assert.equal(late.status, "rejected");
+    assert.match(String((late as PromiseRejectedResult).reason), /CONNECTION_EXPIRED/);
+    assert.equal(resumed.status, "fulfilled");
+    const rows = await databases().transcripts.select().from(transcriptSaves).where(eq(transcriptSaves.learningSessionId, id));
+    assert.deepEqual(rows.map(r => r.saveSequenceNumber).sort(), [0, 1], "Confirmed saves survive rotation; nothing unconfirmed is left");
   });
   it("requires deletion recheck in the original session, blocks all sessions immediately and removes source on maintenance", async () => {
     const a = await login(), s = await startLearning(a, "conversation");

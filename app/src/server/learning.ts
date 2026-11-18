@@ -85,10 +85,16 @@ function requireLearningConnection(row: LearningRow, learningConnectionToken: st
     (!(allowEnded && row.learningSessionEndedAt) && (!row.learningConnectionExpiresAt || row.learningConnectionExpiresAt <= now))) throw new AppError("CONNECTION_EXPIRED", 409);
 }
 async function readConfirmed(row: LearningRow): Promise<ConversationSnapshot> {
-  const stored = await databases().transcripts.select().from(transcriptSaves).where(and(eq(transcriptSaves.learningSessionId, row.learningSessionId), sql`${transcriptSaves.saveSequenceNumber} <= ${row.confirmedSaveSequenceNumber}`)).orderBy(asc(transcriptSaves.saveSequenceNumber));
+  const stored = await databases().transcripts.select({
+    saveSequenceNumber: transcriptSaves.saveSequenceNumber, conversationSnapshot: transcriptSaves.conversationSnapshot,
+    hasDiscardedUnconfirmedSave: transcriptSessionStates.hasDiscardedUnconfirmedSave,
+  }).from(transcriptSaves)
+    .innerJoin(transcriptSessionStates, eq(transcriptSaves.learningSessionId, transcriptSessionStates.learningSessionId))
+    .where(and(eq(transcriptSaves.learningSessionId, row.learningSessionId), sql`${transcriptSaves.saveSequenceNumber} <= ${row.confirmedSaveSequenceNumber}`))
+    .orderBy(asc(transcriptSaves.saveSequenceNumber));
   if (!stored.length || stored.at(-1)!.saveSequenceNumber !== row.confirmedSaveSequenceNumber) throw new AppError("RECORD_UNAVAILABLE", 409);
   const turns = new Map<string, LearningSessionState["turns"][number]>(), corrections = new Map<string, Correction>();
-  let learningState: ConversationSnapshot["learningState"] = "conversation", hasConversationGaps = false;
+  let learningState: ConversationSnapshot["learningState"] = "conversation", hasConversationGaps = stored[0].hasDiscardedUnconfirmedSave;
   // Route events accumulate by ID like corrections (a bounded client window may drop old ones);
   // the no-progress streak is the latest save's value.
   const routeEvents = new Map<string, MissionRouteEvent>();
@@ -111,6 +117,29 @@ async function readConfirmed(row: LearningRow): Promise<ConversationSnapshot> {
   }
   const missionProgress = routeEvents.size || noProgress.count ? { routeEvents: [...routeEvents.values()], noProgress } : undefined;
   return { turns: [...turns.values()], corrections: [...corrections.values()], learningState, hasConversationGaps, ...(missionProgress ? { missionProgress } : {}) };
+}
+/**
+ * Called only while rotating the connection, with the session row locked. A save committed to the
+ * temporary DB whose confirmation failed belongs to the retired connection: the new connection
+ * restores confirmed state only and may build a different next save, so the stale upload is removed
+ * instead of blocking that sequence. Lock order matches saveLearning (records row, then state row).
+ * If the records transaction later rolls back, only unconfirmed data was lost; an identical retry re-inserts it.
+ */
+async function discardUnconfirmedSaves(row: LearningRow) {
+  return databases().transcripts.transaction(async temp => {
+    const [state] = await temp.select().from(transcriptSessionStates).where(eq(transcriptSessionStates.learningSessionId, row.learningSessionId)).for("update");
+    if (!state || state.sourceDeletedAt) return false;
+    const unconfirmed = await temp.delete(transcriptSaves)
+      .where(and(eq(transcriptSaves.learningSessionId, row.learningSessionId), sql`${transcriptSaves.saveSequenceNumber} > ${row.confirmedSaveSequenceNumber}`))
+      .returning({ snapshotHash: transcriptSaves.snapshotHash });
+    if (state.hasDiscardedUnconfirmedSave || !unconfirmed.length) return state.hasDiscardedUnconfirmedSave;
+    const [confirmed] = await temp.select({ snapshotHash: transcriptSaves.snapshotHash }).from(transcriptSaves)
+      .where(and(eq(transcriptSaves.learningSessionId, row.learningSessionId), eq(transcriptSaves.saveSequenceNumber, row.confirmedSaveSequenceNumber)));
+    if (unconfirmed.every(save => save.snapshotHash === confirmed?.snapshotHash)) return false;
+    await temp.update(transcriptSessionStates).set({ hasDiscardedUnconfirmedSave: true })
+      .where(eq(transcriptSessionStates.learningSessionId, row.learningSessionId));
+    return true;
+  });
 }
 type MissionRow = typeof learningSessionMissions.$inferSelect;
 function publicMissionFromRow(row: MissionRow): PublicMission {
@@ -140,7 +169,10 @@ export async function startLearning(loginSessionToken: string | undefined, demoS
       const learningSessionInterruptedAt = previous.learningSessionInterruptedAt ?? previous.learningConnectionExpiresAt ?? now;
       if (now.getTime() >= learningSessionInterruptedAt.getTime() + DAY) throw new AppError("SESSION_CLOSING", 409);
       const { missionProgress: storedProgress, ...confirmed } = await readConfirmed(previous), missionProgress = resumeMissionProgress(storedProgress);
-      const conversationSnapshot: ConversationSnapshot = { ...confirmed, ...(missionProgress ? { missionProgress } : {}) };
+      const discarded = await discardUnconfirmedSaves(previous);
+      const conversationSnapshot: ConversationSnapshot = {
+        ...confirmed, hasConversationGaps: confirmed.hasConversationGaps === true || discarded, ...(missionProgress ? { missionProgress } : {}),
+      };
       const learningConnectionToken = token();
       await tx.update(learningSessions).set({ learningSessionStatus: "active", learningSessionInterruptedAt: null, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000) }).where(eq(learningSessions.learningSessionId, previous.learningSessionId));
       return { learningSessionId: previous.learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber: previous.confirmedSaveSequenceNumber, demoScenario: previous.demoScenario, conversationSnapshot,
@@ -289,8 +321,9 @@ export async function evaluateMissionSession(row: LearningRow, mission: MissionR
 }
 /** Stores a validated evaluation once. The details expire with the note; the aggregate stays (DEC-088). */
 export async function storeMissionEvaluation(tx: RecordsTransaction, row: LearningRow, run: EvaluationRun) {
-  if (!row.learningSessionEndedAt || !await missionEvaluationPending(tx, row.learningSessionId)) return;
+  if (!row.learningSessionEndedAt || !row.transcriptDeleteDeadlineAt || !await missionEvaluationPending(tx, row.learningSessionId)) return;
   const now = await dbNow(tx);
+  if (row.transcriptDeleteDeadlineAt <= now) return;
   await tx.update(learningMissionResults).set({ evaluationStatus: "ready", areaScores: run.score.areas, totalEarnedHalf: run.score.totalEarnedHalf, totalMaxHalf: run.score.totalMaxHalf,
     meetsThreshold: run.score.meetsThreshold, evaluatedAt: now }).where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
   await tx.insert(learningMissionResultDetails).values({ learningSessionId: row.learningSessionId, userId: row.userId, judgements: run.judgements,
@@ -332,10 +365,8 @@ export async function finalizeLearningNote(tx: RecordsTransaction, row: Learning
   // An evaluation not settled by the source deadline is unavailable (DEC-089): no score, no achievement.
   if (row.transcriptDeleteDeadlineAt <= now) await tx.update(learningMissionResults).set({ evaluationStatus: "unavailable" })
     .where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
-  if (settled(row.noteGenerationStatus)) {
-    await deleteSettledSource(tx, row);
-    return;
-  }
+  // The caller checks both durable results in a separate transaction before deleting the source.
+  if (settled(row.noteGenerationStatus)) return;
   if (row.transcriptDeleteDeadlineAt <= now) {
     await deleteTranscriptSource(row.learningSessionId, "deadline_expired");
     await tx.update(learningSessions).set({ noteGenerationStatus: "expired", learningConnectionTokenHash: null }).where(eq(learningSessions.learningSessionId, row.learningSessionId));

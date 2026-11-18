@@ -26,7 +26,8 @@ export class CascadeAdapter implements VoicePort {
   async connect(context?: ConversationSnapshot, prior?: PriorLearningContext) {
     if (this.state !== "idle") throw new Error("VOICE_CONNECTION_STATE");
     this.state = "connecting";
-    this.records = new VoiceLearningRecords(context);
+    const { missionMode } = this.options;
+    this.records = new VoiceLearningRecords(context, missionMode ? { missionMode } : undefined);
     this.prior = prior ? structuredClone(prior) : undefined;
     const timer = setTimeout(() => this.fail("timeout"), this.options.connectTimeoutMs ?? 15000);
     try {

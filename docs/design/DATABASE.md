@@ -42,7 +42,7 @@
 
 각 저장 행의 `save_sequence_number`는 재전송을 식별하는 저장 순번, 지속 학습 행의 `confirmed_save_sequence_number`는 저장 성공 확정 위치다. 호환성 유지 시 초기 0번·순번·`snapshot_hash`·대화·확정 위치와 과거 NULL 시각을 보존하고 기존 해시를 재계산하지 않는다. API/TypeScript도 저장 순번 용어를 사용한다. 두 DB 동시 커밋을 보장하거나 미확정 저장을 재개 근거로 쓰지 않는다.
 
-런타임 `ConversationSnapshot`은 `turnId`·`correctionId`·`learningState`·`hasConversationGaps`를 사용하지만 저장 JSON은 기존 `id`·`learning`·`gaps` 키를 유지한다. 서버 경계에서 구형 JSON을 검증·정규화하고 저장 시 기존 검증기의 키 순서·기본값으로 직렬화한다. 기존 행·해시를 재작성하지 않고 같은 순번 재전송·다른 내용 거절 계약을 유지한다. 코덱은 [learning.ts](../../app/src/server/learning.ts)의 `validateConversationSnapshot`·`encodeStoredConversationSnapshot`이다.
+런타임 `ConversationSnapshot`은 `turnId`·`correctionId`·`learningState`·`hasConversationGaps`를 사용하지만 저장 JSON은 기존 `id`·`learning`·`gaps` 키를 유지한다. 서버 경계에서 구형 JSON을 검증·정규화하고 저장 시 기존 검증기의 키 순서·기본값으로 직렬화한다. 확정한 행과 해시는 재작성하지 않는다. 임시 상태의 `has_discarded_unconfirmed_save`는 마지막 확정 스냅샷과 해시가 다른 미확정 저장이 정리됐는지 표시한다. 연결 교체 시 미확정 저장의 정리와 동일 연결의 순번 재시도는 [묶음 저장 규칙](LEARNING-PERSISTENCE.md#묶음-저장과-두-db-확정)을 따른다. 코덱은 [learning.ts](../../app/src/server/learning.ts)의 `validateConversationSnapshot`·`encodeStoredConversationSnapshot`이다.
 
 DEC-049 DB 이관과 후속 런타임 명명 정리의 실제 변경·검증 결과는 각각 [2026-10-25](../worklogs/2026-10-25.md), [2026-10-27](../worklogs/2026-10-27.md)에 둔다.
 

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, integer, text, jsonb, timestamp, primaryKey, index, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, integer, text, jsonb, timestamp, boolean, primaryKey, index, check } from "drizzle-orm/pg-core";
 const time = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 // Separate instance, excluded from backups. State survives normal source deletion.
 // Unknown historical timestamps remain NULL; no transcript or hash belongs here.
@@ -7,6 +7,7 @@ export const transcriptSessionStates = pgTable("transcript_session_states", {
   learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull(),
   transcriptStorageCreatedAt: time("transcript_storage_created_at"), firstNonemptySaveAt: time("first_nonempty_save_at"),
   transcriptDeleteDeadlineAt: time("transcript_delete_deadline_at"), sourceDeletedAt: time("source_deleted_at"), sourceDeletionReason: text("source_deletion_reason"),
+  hasDiscardedUnconfirmedSave: boolean("has_discarded_unconfirmed_save").default(false).notNull(),
 }, t => [
   index("transcript_state_user").on(t.userId),
   check("transcript_source_deletion_pair", sql`(${t.sourceDeletedAt} is null) = (${t.sourceDeletionReason} is null)`),

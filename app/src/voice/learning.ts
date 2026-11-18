@@ -26,11 +26,12 @@ export class VoiceLearningRecords {
   private cancelled = new Set<string>();
   private pending = new Map<string, { role: Turn["role"]; text: string; complete?: boolean; played?: boolean; inputTurnId?: string; result?: VoiceLearningResult; missionReport?: MissionStateReport }>();
   private mission?: MissionTracker;
-  /** `mission` enables the realtime mission validator; real mode ignores correction results (PRD 4.3). */
-  constructor(snapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation" }, private missionConfig?: MissionTrackerConfig) {
+  /** Mode governs learning records; supplying route IDs also enables the mission tracker. */
+  constructor(snapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation" },
+    private missionConfig?: MissionTrackerConfig | Pick<MissionTrackerConfig, "missionMode">) {
     const bounded = boundRecords(snapshot.turns, snapshot.corrections, 128 * 1024);
     // The tracker sees the full restored order so events outside the storage window still complete a route.
-    if (missionConfig) this.mission = new MissionTracker(missionConfig, { turns: snapshot.turns, progress: snapshot.missionProgress });
+    if (missionConfig && "routeIds" in missionConfig) this.mission = new MissionTracker(missionConfig, { turns: snapshot.turns, progress: snapshot.missionProgress });
     const { missionProgress: _restored, ...rest } = snapshot;
     this.snapshot = this.withMission({ ...rest, turns: bounded.turns, corrections: bounded.corrections });
     this.acknowledge(this.snapshot);
@@ -62,14 +63,20 @@ export class VoiceLearningRecords {
     const turn: Turn = { turnId: event.turnId, requestId: entry.role === "assistant" ? (entry.inputTurnId ?? event.turnId) : event.turnId, role: entry.role, text: entry.text };
     let corrections = [...this.snapshot.corrections], learningState = this.snapshot.learningState;
     const result = entry.result, source = this.snapshot.turns.find(t => t.turnId === entry.inputTurnId && t.role === "user");
+    const lastCorrection = corrections.at(-1);
+    const practice = this.missionConfig?.missionMode === "practice";
     if (result && source && source.text.trim() === result.original.trim()) {
       // App verifies evidence; language judgement remains the provider's responsibility.
       const validCorrection = result.replacement && turn.text.includes(result.replacement);
       if (!result.replacement || validCorrection) {
         learningState = result.learningState;
-        if (result.retryOutcome && corrections.length) {
-          const last = corrections.at(-1)!;
-          if (last.sourceTurnId !== source.turnId && !last.attempts.some(a => a.turnId === source.turnId)) corrections = [...corrections.slice(0, -1), { ...last, attempts: [...last.attempts, { turnId: source.turnId, outcome: result.retryOutcome }] }];
+        if (result.retryOutcome && lastCorrection && lastCorrection.sourceTurnId !== source.turnId) {
+          const canRecordAttempt = practice
+            ? this.snapshot.learningState === "retry" && lastCorrection.attempts.length === 0
+            : !lastCorrection.attempts.some(attempt => attempt.turnId === source.turnId);
+          if (canRecordAttempt) corrections[corrections.length - 1] = {
+            ...lastCorrection, attempts: [...lastCorrection.attempts, { turnId: source.turnId, outcome: result.retryOutcome }],
+          };
         }
         if (validCorrection) corrections.push({ correctionId: turn.turnId, sourceTurnId: source.turnId, deliveredTurnId: turn.turnId,
           replacement: result.replacement!, explanation: result.explanation ?? "", attempts: [] } satisfies Correction);
@@ -78,7 +85,7 @@ export class VoiceLearningRecords {
     if (this.mission) {
       this.mission.confirmTurn(turn);
       // A practice reply that delivers a correction pauses the role play (DEC-092), so its route events are not applied.
-      const correctionReply = this.missionConfig?.missionMode === "practice" && corrections.some(c => c.deliveredTurnId === turn.turnId);
+      const correctionReply = practice && corrections.some(c => c.deliveredTurnId === turn.turnId);
       const report = correctionReply && entry.missionReport ? { ...entry.missionReport, routeEvents: [] } : entry.missionReport;
       if (turn.role === "assistant") this.mission.commit(turn.turnId, entry.inputTurnId, report);
     }

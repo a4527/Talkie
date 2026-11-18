@@ -17,7 +17,7 @@ export interface MissionStateReport {
   progress?: MissionProgressSignal;
 }
 /** Sent to the realtime AI when the reply it is about to speak ends a real mission without progress. */
-export const MISSION_NO_PROGRESS_CLOSING = "The app is ending this mission now because the conversation is not moving forward. Stay in role and say one short, polite closing line, for example that the customer can come back to the counter any time. Do not ask a question, give a hint or correction, or mention scores or failure.";
+export const MISSION_NO_PROGRESS_CLOSING = "The app is ending this mission now because the conversation is not moving forward. Stay in role and say one short, polite closing line appropriate to the situation. Do not ask a question, give a hint or correction, or mention scores or failure.";
 export type MissionEnding = "no_progress_failed";
 /** Lets a provider adapter ask, before speaking, whether a reply will end the mission (see MissionTracker.previewEnding). */
 export type MissionEndingAdvisor = (inputTurnId: string, report: MissionStateReport) => MissionEnding | undefined;
@@ -30,9 +30,14 @@ const USER_EVIDENCE: readonly MissionRouteEventKind[] = ["user_accepted", "route
 export function createMissionStateToolDeclaration(missionMode: MissionMode) {
   return {
     name: MISSION_STATE_TOOL_NAME,
-    description: "Report mission state for the reply you are about to speak. Call BEFORE speaking, once per learner utterance. " +
+    description: (missionMode === "practice"
+      ? "After you asked the learner to repeat a correction, call record_learning_result for the current turn before calling this tool. This includes an explicit skip that resumes the role play. Both reports can be needed on the same turn. "
+      : "") +
+      "Report mission state for the reply you are about to speak. Call BEFORE speaking, once per learner utterance. " +
       "routeEvents: proposed = your reply offers a concrete allowed resolution with its conditions; user_accepted = the learner's latest utterance accepts a concrete resolution you offered; " +
       "staff_confirmed = your reply confirms a resolution the learner accepted; route_changed = the learner's latest utterance switches to another allowed resolution (routeId is the new one). " +
+      "When stating a resolution's conditions for the first time, report proposed, ask whether the conditions are acceptable, and wait for the learner's next utterance. Do not report user_accepted or staff_confirmed for that resolution in this reply. A request or choice before hearing the conditions is not consent. " +
+      "When the learner's latest utterance agrees to conditions you already stated and your reply confirms that resolution, put both user_accepted and staff_confirmed for that route in this one report. staff_confirmed alone does not record the learner's consent and does not finish the mission. " +
       (missionMode === "real" ? "progress: progress when the learner's latest utterance moves the situation forward, no_progress when they had a chance to answer your relevant question or offer and did not, excluded when the input was unclear, possibly misrecognized, or followed your own repeated question." : "Omit progress."),
     parameters: {
       type: "OBJECT",

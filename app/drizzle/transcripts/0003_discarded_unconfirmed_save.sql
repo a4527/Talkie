@@ -1,0 +1,1 @@
+ALTER TABLE "transcript_session_states" ADD COLUMN "has_discarded_unconfirmed_save" boolean DEFAULT false NOT NULL;

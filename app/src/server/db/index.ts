@@ -14,9 +14,12 @@ function connect() {
     statement_timeout: 10_000, idle_in_transaction_session_timeout: 15_000 };
   const recordsPool = new Pool({ ...options, connectionString: recordsDatabaseUrl });
   const transcriptsPool = new Pool({ ...options, connectionString: transcriptsDatabaseUrl });
-  // Never emit driver errors: they may contain SQL, parameters or connection details.
-  recordsPool.on("error", () => {});
-  transcriptsPool.on("error", () => {});
+  for (const pool of [recordsPool, transcriptsPool]) {
+    // pg-pool handles idle clients. A checked-out client can disconnect between queries.
+    // Keep both error events handled without logging driver details.
+    pool.on("error", () => {});
+    pool.on("connect", client => client.on("error", () => {}));
+  }
   return { records: drizzle(recordsPool, { schema }), transcripts: drizzle(transcriptsPool, { schema }), recordsPool, transcriptsPool };
 }
 export function databases() { return globalDb.talkieDatabases ??= connect(); }

@@ -126,10 +126,10 @@ export class GeminiLiveAdapter implements VoicePort {
       this.emit({ type: "audio", turnId: this.outputTurnId, pcm: Uint8Array.from(binary, c => c.charCodeAt(0)), sampleRateHz });
     }
     if (content.turnComplete) {
-      if (this.inputTurnId) this.emit({ type: "input-complete", turnId: this.inputTurnId });
       // A tool-only phase can complete before its spoken continuation arrives.
-      // Preserve its evidence and never acknowledge it as a played answer.
+      // Keep input open for any remaining transcript fragments.
       if (this.outputTurnId && !this.outputStarted) return;
+      if (this.inputTurnId) this.emit({ type: "input-complete", turnId: this.inputTurnId });
       if (this.outputTurnId) {
         this.lastOutputTurnId = this.outputTurnId;
         this.emit({ type: "response-complete", turnId: this.outputTurnId, inputTurnId: this.inputTurnId || undefined });

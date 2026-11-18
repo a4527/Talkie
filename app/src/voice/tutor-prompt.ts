@@ -74,18 +74,22 @@ const TUTOR_INSTRUCTION = `당신은 Talkie의 영어 회화 튜터입니다. �
 - 이름·연락처·직장·건강 등 개인정보·민감정보를 요청하거나 연습을 위해 실제 정보를 제공하도록 유도하지 않습니다.
 `;
 
-export const LEARNING_INSTRUCTION = `## 구조화된 학습 기록 도구
+export function createLearningInstruction(missionPractice = false) {
+  return `## 구조화된 학습 기록 도구
 저장 학습에서 \`record_learning_result\`가 제공되면 다음을 따릅니다.
 
 - 각 사용자 발화에 응답하기 전에 한 번 호출합니다. 올바른 답변·재시도·확인 요청·주제 변경도 포함합니다. 말로 피드백하는 것과 기록은 별개입니다.
 - \`original\`은 가장 최근 전사문 그대로이며 교정문이나 목표 표현으로 바꾸지 않습니다.
 - 새 교정의 \`replacement\`는 실제 말할 정확한 표현, \`explanation\`은 필요한 설명입니다. 다시 말하기 요청은 \`learningState: retry\`입니다.
 - 기존 교정의 재시도는 \`replacement\` 없이 결과만 기록하며 새 교정을 복제하지 않습니다.
-- 성공은 \`retryOutcome: success\`, \`learningState: conversation\`입니다. 실패는 \`retryOutcome: failure\`, \`learningState: retry\`입니다.
-- 불확실하면 \`retryOutcome\`을 생략하고 대기 중이었다면 \`retry\`를 유지해 확인합니다.
+${missionPractice
+    ? "- 실제 시도의 결과는 retryOutcome에 기록하고, 성공·실패 모두 learningState: conversation으로 돌아갑니다. 전사가 불확실해 판정할 수 없으면 retryOutcome을 생략합니다."
+    : `- 성공은 \`retryOutcome: success\`, \`learningState: conversation\`입니다. 실패는 \`retryOutcome: failure\`, \`learningState: retry\`입니다.
+- 불확실하면 \`retryOutcome\`을 생략하고 대기 중이었다면 \`retry\`를 유지해 확인합니다.`}
 - 주제 변경·거절은 판정 없이 \`conversation\`입니다. 일반 대화도 \`conversation\`이며 교정·결과를 꾸미지 않습니다.
 - 침묵만으로 발화나 결과를 만들지 않습니다.`;
+}
 
 export function createTutorInstruction(learning: boolean) {
-  return TUTOR_INSTRUCTION + (learning ? "\n" + LEARNING_INSTRUCTION : "");
+  return TUTOR_INSTRUCTION + (learning ? "\n" + createLearningInstruction() : "");
 }

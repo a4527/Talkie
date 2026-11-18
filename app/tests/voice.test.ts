@@ -108,7 +108,7 @@ describe("local credential broker", () => {
 });
 
 // Integration events use the same evidence boundaries for fake and actual transports.
-import { VoiceLearningRecords } from "../src/voice/learning";
+import { VoiceLearningRecords, type VoiceLearningResult } from "../src/voice/learning";
 import { VoiceLearningStore } from "../src/client/learning";
 import { buildVoiceNoteMarkdown } from "../src/voice/note";
 const empty = () => ({ turns: [], corrections: [], learningState: "conversation" as const });
@@ -139,6 +139,52 @@ describe("confirmed voice learning and storage", () => {
     restored.apply({ type: "played", turnId: "a2" });
     expect(restored.getSnapshot().learningState).toBe("conversation");
     expect(restored.getSnapshot().corrections[0].attempts).toEqual([{ turnId: "u2", outcome: "success" }]);
+  });
+  it.each([
+    { label: "a failed attempt", input: "I go yesterday.", outcome: "failure" as const, reply: "Almost. I went yesterday. What happened next?" },
+    { label: "a skipped attempt", input: "I'd rather skip that.", outcome: undefined, reply: "Okay. What happened next?" },
+  ])("returns to practice role play after $label is reported and played", ({ input, outcome, reply }) => {
+    const records = new VoiceLearningRecords(undefined, { missionMode: "practice", routeIds: [] });
+    conversation(records);
+    records.apply({ type: "transcript", role: "user", turnId: "u2", text: input });
+    records.apply({ type: "input-complete", turnId: "u2" });
+    records.apply({ type: "learning-result", turnId: "a2", inputTurnId: "u2",
+      result: { original: input, learningState: "conversation", ...(outcome ? { retryOutcome: outcome } : {}) } });
+    records.apply({ type: "transcript", role: "assistant", turnId: "a2", text: reply });
+    records.apply({ type: "response-complete", turnId: "a2", inputTurnId: "u2" });
+    expect(records.getSnapshot().learningState).toBe("retry");
+    records.apply({ type: "played", turnId: "a2" });
+    const snapshot = records.getSnapshot();
+    expect(snapshot.learningState).toBe("conversation");
+    expect(snapshot.corrections).toHaveLength(1);
+    expect(snapshot.corrections[0].attempts).toEqual(outcome ? [{ turnId: "u2", outcome }] : []);
+  });
+  it("does not attach a practice attempt to an older correction when the new correction was not verified", () => {
+    const records = new VoiceLearningRecords(undefined, { missionMode: "practice", routeIds: [] });
+    conversation(records);
+    function playResult(suffix: string, input: string, reply: string, result: VoiceLearningResult) {
+      const inputTurnId = `u${suffix}`;
+      const turnId = `a${suffix}`;
+      records.apply({ type: "transcript", role: "user", turnId: inputTurnId, text: input });
+      records.apply({ type: "input-complete", turnId: inputTurnId });
+      records.apply({ type: "learning-result", turnId, inputTurnId, result });
+      records.apply({ type: "transcript", role: "assistant", turnId, text: reply });
+      records.apply({ type: "response-complete", turnId, inputTurnId });
+      records.apply({ type: "played", turnId });
+    }
+    playResult("2", "I'd rather skip that.", "Okay. What happened next?", {
+      original: "I'd rather skip that.", learningState: "conversation",
+    });
+    playResult("3", "for the fix it", "Try: to fix it. Can you say it again?", {
+      original: "for to fix it", learningState: "retry", replacement: "to fix it",
+    });
+    playResult("4", "to fix it", "Great! What happened next?", {
+      original: "to fix it", learningState: "conversation", retryOutcome: "success",
+    });
+    expect(records.getSnapshot().turns.at(-1)?.turnId).toBe("a4");
+    expect(records.getSnapshot().corrections).toHaveLength(1);
+    expect(records.getSnapshot().corrections[0].attempts).toEqual([]);
+    expect(records.getSnapshot().learningState).toBe("conversation");
   });
   it("excludes interrupted and late output, cancels tool metadata, and never invents a correction", () => {
     const records = new VoiceLearningRecords(); conversation(records, "1", true);
@@ -194,10 +240,11 @@ describe("confirmed voice learning and storage", () => {
     const { adapter, socket, events } = fixture();
     const ready = adapter.connect(); socket.message({ setupComplete: {} }); await ready;
     const records = new VoiceLearningRecords();
-    socket.message({ serverContent: { inputTranscription: { text: "I go yesterday." } } });
+    socket.message({ serverContent: { inputTranscription: { text: "I go" } } });
     socket.message({ toolCall: { functionCalls: [{ id: "tool-1", name: "record_learning_result", args: { original: "I go yesterday.", learningState: "retry", replacement: "I went yesterday." } }] } });
     socket.message({ serverContent: { turnComplete: true } }); await flush();
-    expect(events.filter(e => e.type === "response-complete")).toHaveLength(0);
+    expect(events.filter(e => e.type === "input-complete" || e.type === "response-complete")).toHaveLength(0);
+    socket.message({ serverContent: { inputTranscription: { text: " yesterday." } } });
     socket.message({ serverContent: { outputTranscription: { text: "Try: I went yesterday." }, modelTurn: { parts: [
       { inlineData: { mimeType: "audio/pcm;rate=24000", data: "AAA=" } },
     ] }, turnComplete: true } }); await flush();
@@ -205,6 +252,7 @@ describe("confirmed voice learning and storage", () => {
     const complete = events.find(e => e.type === "response-complete")!;
     expect(complete.type).toBe("response-complete");
     if (complete.type === "response-complete") records.apply({ type: "played", turnId: complete.turnId });
+    expect(records.getSnapshot().turns.find(turn => turn.role === "user")?.text).toBe("I go yesterday.");
     expect(records.getSnapshot().corrections).toHaveLength(1);
     expect(records.getSnapshot().learningState).toBe("retry");
     adapter.close();

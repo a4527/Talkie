@@ -82,7 +82,7 @@ const DIALOGUES: Dialogue[] = [
     { text: "Hi, I ordered a hot decaf latte, but this one is iced and it's regular coffee.",
       expect: { note: "사과·원하는 처리 질문. 선택지 먼저 꺼내지 않음.", noUnaskedOptions: true, forbiddenEvents: ["proposed", ...NO_CLOSE] } },
     { text: "How do I say 환불 in English?",
-      expect: { note: "역할 잠시 벗어나 'refund'를 쉬운 영어/짧은 한국어로 알려 주고 역할로 복귀. 대신 환불을 요청·확정하지 않음.", help: "teach_refund", forbiddenEvents: NO_CLOSE } },
+      expect: { note: "역할 잠시 벗어나 'refund'를 쉬운 영어/짧은 한국어로 알려 준다. 처리를 제안하지 않고 학습자가 직접 요청할 차례를 준다.", help: "teach_refund", forbiddenEvents: ["proposed", "route_changed", ...NO_CLOSE] } },
     { text: "Okay. I'd like a refund, please.",
       expect: { note: "환불 조건(취소·전액 환불·수수료 없음) 안내 후 괜찮은지 물음. 확정하지 않음.", conditionsNoConfirm: true, requiredEvents: ["proposed"], forbiddenEvents: NO_CLOSE } },
     { text: "Yes, that's fine.", expect: { note: "확정·마무리, 자동 종료.", requiredEvents: ["user_accepted", "staff_confirmed"] } },
@@ -158,7 +158,10 @@ function label(expect: Expect, text: string, kinds: Kind[], correctionAccepted: 
   if (expect.noUnaskedOptions && (remake || refund)) problems.push(remake && refund ? "unasked_options" : "unasked_proposal");
   if (expect.bothOptionsNoChoice) { if (DECIDED.test(text)) problems.push("decided_for_learner"); else if (!(remake && refund)) problems.push("not_both_options"); }
   if (expect.conditionsNoConfirm) { if (!CONDITIONS.test(text)) problems.push("conditions_missing"); if (DECIDED.test(text)) problems.push("confirmed_before_acceptance"); }
-  if (expect.help === "teach_refund" && !/\brefund\b/i.test(text)) problems.push("help_missing_refund");
+  if (expect.help === "teach_refund") {
+    if (!/\brefund\b/i.test(text)) problems.push("help_missing_refund");
+    if (remake || DECIDED.test(text) || /\bwould you like (?:me to )?(?:a (?:full )?refund|refund)\b/i.test(text)) problems.push("help_offers_resolution");
+  }
   if (expect.help === "korean_or_easy_english" && !HANGUL.test(text) && !/I ordered|you can say|try saying/i.test(text)) problems.push("help_not_visible");
   if (expect.correction === "expected" && !correctionAccepted) problems.push(correctionOffered ? "correction_rejected_by_app" : "correction_missing");
   if (expect.correction === "not_expected" && correctionOffered) problems.push("unneeded_correction");

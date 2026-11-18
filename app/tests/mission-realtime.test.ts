@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("../src/server/learning", () => ({ getVoiceLearningContext: vi.fn() }));
 vi.mock("../src/server/auth", () => ({ withIdentity: vi.fn() }));
 vi.mock("../src/server/voice-token", () => ({ issueVoiceToken: vi.fn() }));
-import { findCompletedRoute, parseMissionStateReport, MissionTracker, type MissionStateReport } from "../src/mission/realtime";
+import { createMissionStateToolDeclaration, findCompletedRoute, parseMissionStateReport, MissionTracker, type MissionStateReport } from "../src/mission/realtime";
 import { validateMissionProgress } from "../src/mission/progress";
 import { currentMission } from "../src/mission/definitions";
 import { createMissionInstruction } from "../src/mission/prompt";
@@ -55,6 +55,7 @@ describe("route completion", () => {
     expect(findCompletedRoute([e("proposed", "t1"), e("user_accepted", "t2"), e("staff_confirmed", "t3")], order)).toBe("remake");
     expect(findCompletedRoute([e("user_accepted", "t1"), e("proposed", "t2"), e("staff_confirmed", "t3")], order)).toBeUndefined();
     expect(findCompletedRoute([e("proposed", "t1"), e("staff_confirmed", "t3")], order)).toBeUndefined();
+    expect(findCompletedRoute([e("proposed", "t1"), e("staff_confirmed", "t1"), e("user_accepted", "t2")], order)).toBeUndefined();
     expect(findCompletedRoute([e("proposed", "t1"), e("user_accepted", "t2", "refund"), e("staff_confirmed", "t3")], order)).toBeUndefined();
     expect(findCompletedRoute([e("proposed", "t1"), e("user_accepted", "t2"), e("staff_confirmed", "t3")], id => id === "t1" ? undefined : order(id))).toBeUndefined();
   });
@@ -180,6 +181,13 @@ describe("mission realtime providers", () => {
     expect(browser.tools![0].functionDeclarations.map(t => t.name)).toEqual(["report_mission_state"]);
     const practice = createGeminiLiveSetup(true, { missionMode: "practice", instruction: "server" });
     expect(practice.tools![0].functionDeclarations.map(t => t.name)).toEqual(["record_learning_result", "report_mission_state"]);
+    const practiceLearning = practice.tools![0].functionDeclarations[0];
+    expect(practiceLearning.description).toContain("before giving feedback or resuming the role play");
+    expect(practiceLearning.description).toContain("Set learningState: conversation and omit replacement in both cases.");
+    expect(practiceLearning.description).toContain("If the learner skips the attempt and continues the role play, call with learningState: conversation and omit retryOutcome and replacement.");
+    expect(practice.tools![0].functionDeclarations[1].description).toContain("call record_learning_result for the current turn before calling this tool");
+    expect(browser.tools![0].functionDeclarations[0].description).not.toContain("record_learning_result");
+    expect(createGeminiLiveSetup(true).tools![0].functionDeclarations[0].description).toContain("failure with retry");
     expect(practice.systemInstruction).toEqual({ parts: [{ text: "server" }] });
     expect(JSON.stringify(createGeminiLiveSetup(true, { missionMode: "practice" }))).not.toContain(definition.partner.knowsAtStart[0]);
   });
@@ -189,13 +197,55 @@ describe("mission realtime providers", () => {
     expect(real).toContain("## 실전 모드"); expect(real).toContain("`no_progress`"); expect(real).not.toContain("record_learning_result");
     expect(practice).toContain("record_learning_result"); expect(practice).not.toContain("`no_progress`");
     // PRD 4.2.1: options only when the learner asks how or leaves the choice; never chosen for them (2026-11-16 provider check).
-    for (const text of [real, practice]) { expect(text).toContain("처리 방법·선택지를 먼저 꺼내지 않습니다"); expect(text).toContain("대신 고르지 않습니다"); expect(text).toContain("학습자가 조건에 동의한 다음 응답에서 확정합니다"); }
+    for (const text of [real, practice]) {
+      expect(text).toContain("질문 안에서도 재제조·환불을 예로 들거나 직원이 해 줄 수 있는 처리를 말하지 않습니다");
+      expect(text).toContain("대신 고르지 않습니다");
+      expect(text).toContain("학습자가 조건에 동의한 다음 응답에서 확정합니다");
+    }
   });
   it("makes the partner's speaking level concrete and keeps it from changing how much is solved for the learner", () => {
     const a1 = createMissionInstruction(definition, "real", "A1"), c = createMissionInstruction(definition, "real", "C");
     expect(a1).toContain("## 상대역 말하기 수준(A1)"); expect(a1).toContain("8단어 안팎"); expect(a1).toContain("조건은 붙이지 않습니다");
     expect(c).not.toContain("8단어 안팎");
     for (const text of [a1, c]) expect(text).toContain("대신 해결해 주는 정도나 학습자가 직접 해야 할 요청·선택은 바꾸지 않습니다");
+  });
+  it("keeps an explicitly requested route alone at every level (2026-11-18: B1·B2·C added an unasked refund to a remake request)", () => {
+    for (const level of ["B1", "B2", "C"] as const) {
+      const text = createMissionInstruction(definition, "real", level);
+      expect(text).toContain("말하기 수준과 관계없이 그 처리의 조건만 말하고");
+      expect(text).toContain("\"Which one would you prefer?\"처럼 둘 중 고르게 묻지 않습니다");
+      expect(text).toContain("높은 수준에서도 학습자가 요청하지 않은 대안이나 선택지를 덧붙이지 않습니다");
+    }
+  });
+  it("asks for user_accepted together with staff_confirmed on the confirming reply (2026-11-18: A1 Live sent staff_confirmed alone)", () => {
+    for (const mode of ["real", "practice"] as const) {
+      const description = createMissionStateToolDeclaration(mode).description;
+      expect(description).toContain("put both user_accepted and staff_confirmed for that route in this one report");
+      expect(description).toContain("staff_confirmed alone does not record the learner's consent");
+      expect(createMissionInstruction(definition, mode, "A1")).toContain("`staff_confirmed`만 보고하면 학습자의 동의가 기록되지 않아");
+    }
+  });
+  it("uses the selected mission's situation and level rules without injecting cafe instructions", () => {
+    const library = {
+      ...definition,
+      missionId: "library-group-study",
+      publicView: { title: "도서관에서 그룹 공부", situation: "도서관에서 그룹 공부할 장소를 정합니다.", learnerRole: "학생", partnerRole: "친구", goals: ["공부 장소 정하기"] },
+      partner: {
+        knowsAtStart: ["The library has a group study room."],
+        learnsOnlyFromLearner: ["How many friends will join."],
+        rules: ["Ask how many friends will join."],
+        levelRules: { A1: ["Say 'study room' in one short sentence."] },
+      },
+      routes: [{ routeId: "study-room", label: "그룹 공부방", fixedConditions: "The group must fit.", completion: "Agree to meet in the study room." }],
+    };
+    const a1 = createMissionInstruction(library, "practice", "A1");
+    const a2 = createMissionInstruction(library, "real", "A2");
+    expect(a1).toContain("Say 'study room' in one short sentence.");
+    expect(a2).not.toContain("Say 'study room' in one short sentence.");
+    for (const text of [a1, a2]) {
+      expect(text).toContain("Ask how many friends will join.");
+      expect(text).not.toMatch(/주문|환불|직원|재제조|refund|remake|five minutes/i);
+    }
   });
   it("emits mission reports from Gemini tool calls and ignores corrections in real mode", async () => {
     const socket = new Socket(), events: VoiceEvent[] = [];

@@ -46,6 +46,31 @@ it("connects, transcribes, judges, synthesizes and only commits correction after
   f.port.close();
 });
 
+it("excludes a practice attempt with no pending correction from the next model context", async () => {
+  const f = fixture({ missionMode: "practice" });
+  // The restored correction was skipped before reconnecting.
+  await f.port.connect({
+    turns: [
+      { turnId: "user", requestId: "user", role: "user", text: "I go home yesterday." },
+      { turnId: "assistant", requestId: "user", role: "assistant", text: "Say: I went home." },
+    ],
+    corrections: [{ correctionId: "assistant", sourceTurnId: "user", deliveredTurnId: "assistant",
+      replacement: "I went home.", explanation: "", attempts: [] }],
+    learningState: "conversation",
+  });
+  vi.mocked(f.providers.llm.respond).mockResolvedValueOnce({
+    text: "Great. What happened next?",
+    learningResult: { original: "to fix it", learningState: "conversation", retryOutcome: "success" },
+  });
+  f.utterance("a", "to fix it"); await tick();
+  f.played(f.events.find(event => event.type === "response-complete")!.turnId);
+  f.utterance("b", "I asked for a refund."); await tick();
+  const { corrections } = vi.mocked(f.providers.llm.respond).mock.calls[1][0].context;
+  expect(corrections).toHaveLength(1);
+  expect(corrections[0].attempts).toEqual([]);
+  f.port.close();
+});
+
 it("cancels completed generation awaiting playback and excludes its correction from next context", async () => {
   const f = fixture(); await f.port.connect(); f.utterance("a"); await tick();
   const turn = f.events.find(e => e.type === "response-complete")!;

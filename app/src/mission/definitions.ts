@@ -14,7 +14,12 @@ export interface MissionDefinition {
   /** Shown to the learner before and during the mission. */
   publicView: { title: string; situation: string; learnerRole: string; partnerRole: string; goals: readonly string[] };
   /** Role knowledge boundary for the partner (DEC-076). Never sent to the browser. */
-  partner: { knowsAtStart: readonly string[]; learnsOnlyFromLearner: readonly string[]; rules: readonly string[] };
+  partner: {
+    knowsAtStart: readonly string[];
+    learnsOnlyFromLearner: readonly string[];
+    rules: readonly string[];
+    levelRules?: Partial<Record<LanguageLevel, readonly string[]>>;
+  };
   routes: readonly MissionRoute[];
 }
 export interface GoalCriterion { criterionId: string; label: string; points: number; evidence: string }
@@ -80,7 +85,23 @@ const CAFE_WRONG_ORDER_V1: MissionDefinition = {
       "Do not invent receipts, fees, approvals, stock shortages or other obstacles that are not defined here.",
       "Finish only after the customer accepts a concrete allowed resolution and you confirm it; do not prolong the conversation after that.",
       "All payments and refunds are fictional.",
+      "Offer only the two defined resolutions; politely direct requests for another drink exchange to those choices.",
+      "첫 불만이나 잘못 나온 주문 설명만으로는 해결 방법을 물은 것이 아닙니다. 학습자가 아직 처리를 요청하지 않았고 해결 방법도 묻지 않았으면 사과한 뒤 \"What would you like me to do?\"처럼 원하는 처리를 묻기만 합니다. 질문 안에서도 재제조·환불을 예로 들거나 직원이 해 줄 수 있는 처리를 말하지 않습니다.",
+      "처리 선택지는 학습자가 해결 방법을 묻거나, 원하는 처리를 모르겠다거나 맡기겠다고 할 때만 안내하며, 이때도 대신 고르지 않습니다. 학습자가 구체적인 처리를 요청하거나 고르면 그 처리의 조건만 안내하고 괜찮은지 묻습니다. 이 응답에서는 처리를 확정하거나 진행한다고 말하지 않으며(예: \"I'll remake it\"는 아직 하지 않음), 학습자가 조건에 동의한 다음 응답에서 확정합니다.",
+      "학습자가 처리 이름 없이 사정·선호만 말하면(예: \"I'm in a hurry.\") 그 사정에 맞는 처리 하나로 좁혀 묻지 않습니다(예: \"Would you like the refund, then?\"는 하지 않음). 사정을 짧게 받아 주고 어떤 처리를 원하는지 다시 묻습니다(예: \"I see. Which one would you like?\"). 선택지를 이미 안내했다면 선택지 이름을 짧게 다시 말해도 됩니다.",
+      "학습자가 처리 하나를 직접 요청하면(예: \"Can you make it again?\", \"I'd like my money back.\") 말하기 수준과 관계없이 그 처리의 조건만 말하고 그 조건이 괜찮은지 묻습니다. 같은 응답에서 다른 처리를 \"Or ...\"로 덧붙이거나 \"Which one would you prefer?\"처럼 둘 중 고르게 묻지 않습니다. 다른 처리는 학습자가 다른 방법을 묻거나 바꾸겠다고 할 때만 말합니다.",
     ],
+    levelRules: {
+      A1: [
+        "아래 선택지 예시는 학습자가 방법을 묻거나 모르겠다·맡기겠다고 할 때만 씁니다. 학습자가 이미 처리를 요청했으면 선택지를 말하지 않고 바로 그 처리의 조건으로 넘어갑니다.",
+        "처리 선택지를 안내할 때는 선택지마다 짧은 문장 하나로 말하고 대기 시간·비용 같은 조건은 붙이지 않습니다(예: \"We can make a new one. Or we can give you a refund. Which one?\").",
+        "학습자가 하나를 고르면 그 처리의 조건을 짧은 문장으로 하나씩 말하고 괜찮은지 묻습니다(예: \"It is free. It takes five minutes. Is that okay?\").",
+      ],
+      A2: [
+        "처리 선택지는 학습자가 방법을 묻거나 맡길 때만, 선택지마다 따로 짧은 문장으로 말합니다. 조건은 학습자가 고른 뒤 안내하거나 선택지마다 짧게 하나만 덧붙입니다.",
+        "학습자가 처리를 고르면 \"We will ...\"로 확정하지 말고 조건을 짧게 말한 뒤 괜찮은지 묻습니다(예: \"There is no charge. It takes about five minutes. Is that okay?\").",
+      ],
+    },
   },
   routes: [
     { routeId: "remake", label: "재제조", fixedConditions: "No extra charge. Remake as a hot decaf latte. About 5 minutes wait.",
