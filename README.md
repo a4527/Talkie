@@ -1,8 +1,14 @@
 # Talkie
 
-한국어 화자를 위한 영어 회화 웹서비스 프로젝트입니다.
+Talkie는 한국어 화자가 일상에서 필요한 영어를 소리 내어 연습하는 웹앱입니다. 첫 미션에서는 잘못 나온 카페 주문을 직원과 영어로 이야기해 해결합니다. 연습 모드에서는 교정을 받고 다시 말한 뒤 역할극을 이어가고, 실전 모드에서는 대화 중 교정 없이 목표를 수행합니다. 대화가 끝나면 미션 결과와 복습 노트를 확인할 수 있습니다.
 
-작업별 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
+현재 로컬에서 개발 중입니다. 로그인 없이 텍스트 데모를 실행할 수 있고, 실제 음성 대화는 비공개 로컬 환경에서 시험하고 있습니다. [로컬 데모 실행](#첫-학습-흐름-실행) · [개발 현황](docs/PROGRESS.md)
+
+## About Talkie
+
+Talkie is an independent web app project for Korean speakers practicing spoken English. Learners work through everyday scenarios, starting with resolving an incorrect café order. They can try a corrected phrase in practice mode or complete the conversation without interruptions for corrections in challenge mode, then review their mission results and study notes. A text demo runs locally, and voice conversations are being tested privately. The web app is still in development.
+
+개발 문서 안내는 [AGENTS.md](AGENTS.md)를 참고하세요.
 
 ## 첫 학습 흐름 실행
 
