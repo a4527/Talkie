@@ -15,7 +15,7 @@ export function noteLiteral(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/[\\`*_[\]{}()#!|]/g, "\\$&").replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
 }
-function readLiteral(value: string) {
+export function readLiteral(value: string) {
   return value.replace(/\\([\\`*_[\]{}()#!|])/g, "$1").replace(/&#10;/g, "\n").replace(/&#13;/g, "\r")
     .replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 }
