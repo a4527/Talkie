@@ -82,6 +82,8 @@ export default function Talk() {
   const lockedMode: Mode | undefined = open ? (open.mission ? "mission" : open.demoScenario === "voice" ? "voice" : "text") : undefined;
   const effectiveMode = lockedMode ?? mode;
   const catalog = value?.missions ?? [];
+  // Resuming an open mission never needs a count (DEC-096); only a new start does.
+  const missionsLeft = (value?.missionAllowance?.remaining ?? 0) > 0;
   const chosenMission = catalog.find(m => m.missionId === (open?.mission?.missionId ?? missionId)) ?? catalog[0];
   const usesVoice = effectiveMode !== "text";
 
@@ -214,8 +216,10 @@ export default function Talk() {
             <label className="check"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /> 위 내용과 공급자의 데이터 사용 조건을 확인했어요.</label>
           </div>
         </div>}
+        {effectiveMode === "mission" && value && !open && <p className={`notice-line ${missionsLeft ? "" : "warning"}`} role="status">
+          {missionsLeft ? `남은 미션 ${value.missionAllowance.remaining}회 · 학습자 발화가 저장된 미션만 1회로 세요.` : "남은 미션 횟수가 없어 새 미션을 시작할 수 없어요."}</p>}
         <div className="start-row">
-          <button className="primary start" disabled={busy || records.status !== "ready" || (usesVoice && !accepted) || (effectiveMode === "mission" && !chosenMission)} onClick={start}>{open ? "이어서 하기" : effectiveMode === "mission" ? "미션 시작" : "대화 시작"} <span aria-hidden="true">↗</span></button>
+          <button className="primary start" disabled={busy || records.status !== "ready" || (usesVoice && !accepted) || (effectiveMode === "mission" && (!chosenMission || (!open && !missionsLeft)))} onClick={start}>{open ? "이어서 하기" : effectiveMode === "mission" ? "미션 시작" : "대화 시작"} <span aria-hidden="true">↗</span></button>
           <Link className="text-link" href="/home">홈으로</Link>
         </div>
         <p role="status" className="form-status">{statusMessage || voice.statusMessage}</p>

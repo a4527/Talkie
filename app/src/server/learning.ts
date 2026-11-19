@@ -13,6 +13,7 @@ import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionM
 import { evaluateMission, type AreaScores, type EvaluationRun } from "../mission/evaluation";
 import { currentMission, describeJudgements, listMissionCatalog, findMissionDefinition, findMissionRubric, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
 import { achievementDateFor, DEFAULT_MISSION_TIME_ZONE } from "../mission/achievement";
+import { holdMissionUsage, missionAllowance, settleMissionUsage } from "./mission-usage";
 import { DEFAULT_NO_PROGRESS_THRESHOLD, findCompletedRoute } from "../mission/realtime";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
@@ -181,6 +182,8 @@ export async function startLearning(loginSessionToken: string | undefined, demoS
     }
     if (!["correction", "conversation", "voice"].includes(demoScenario)) throw new AppError("INVALID_SCENARIO");
     const learningSessionId = randomUUID(), learningConnectionToken = token();
+    // A new mission holds one count in this transaction; resuming above never holds another (DEC-096).
+    if (mission && missionRequest) await holdMissionUsage(tx, who.userId, learningSessionId, now);
     const emptyConversationSnapshot: ConversationSnapshot = { turns: [], corrections: [], learningState: "conversation", hasConversationGaps: false };
     await tx.insert(learningSessions).values({ learningSessionId, userId: who.userId, learningSessionStartedAt: now, learningConnectionTokenHash: digest(learningConnectionToken), learningConnectionExpiresAt: new Date(now.getTime() + 45_000), demoScenario });
     let fixedMission: PublicMission | null = null;
@@ -291,6 +294,8 @@ export async function recordMissionEnd(tx: RecordsTransaction, row: LearningRow,
   await tx.update(learningSessionMissions).set({ missionEndReason, finalRouteId }).where(and(eq(learningSessionMissions.learningSessionId, row.learningSessionId), isNull(learningSessionMissions.missionEndReason)));
   // The evaluation is owed only when the learner said something (DEC-087: no-utterance sessions skip it like the note).
   const evaluationStatus = snapshot?.turns.some(t => t.role === "user") ? "pending" : "skipped";
+  // The count held at start is used only when the learner actually spoke (DEC-096), the same condition that owes an evaluation.
+  await settleMissionUsage(tx, row.learningSessionId, evaluationStatus === "pending", await dbNow(tx));
   await tx.insert(learningMissionResults).values({ learningSessionId: row.learningSessionId, userId: row.userId, evaluationStatus }).onConflictDoNothing();
 }
 /** The fixed mission when its evaluation is still owed and the source can still be read; otherwise undefined. */
@@ -445,7 +450,7 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
     // Several credited missions on one local date count once (PRD 4.5).
     const [days] = await tx.select({ count: sql<number>`count(distinct ${learningMissionResults.achievementDate})::int` }).from(learningMissionResults)
       .where(and(eq(learningMissionResults.userId, who.userId), isNotNull(learningMissionResults.achievementDate)));
-    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), achievementDayCount: days?.count ?? 0, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
+    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), missionAllowance: await missionAllowance(tx, who.userId), achievementDayCount: days?.count ?? 0, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
   });
 }
 

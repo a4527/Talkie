@@ -103,6 +103,8 @@ export interface LearningRecordsResponse {
   emailAddress: string;
   /** Startable missions for the selection screen (no partner knowledge or rubric evidence). */
   missions: MissionCatalogEntry[];
+  /** Mission count for new starts: held and confirmed starts are used (DEC-096). `limit` is a local test value. */
+  missionAllowance: { limit: number; remaining: number };
   /** Distinct local dates credited by confirmed missions at or above 80% (PRD 4.5, DEC-095). */
   achievementDayCount: number;
   notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];

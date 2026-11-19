@@ -21,7 +21,7 @@ test("mission selection fixes mode and level in the start request and shows the 
   const starts: unknown[] = [];
   let setupTools: string[] = [];
   await page.route("**/api/learn", async route => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, notes: [], sessions: [] } });
+    if (route.request().method() === "GET") return route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, missionAllowance: { limit: 10, remaining: 3 }, notes: [], sessions: [] } });
     const data = route.request().postDataJSON();
     if (data.action === "start") {
       starts.push(data);
@@ -62,7 +62,7 @@ test("mission selection fixes mode and level in the start request and shows the 
 test("an open mission resumes with its stored mode and level", async ({ page }) => {
   const starts: unknown[] = [];
   await page.route("**/api/learn", async route => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, notes: [], sessions: [{ learningSessionId: "synthetic-mission",
+    if (route.request().method() === "GET") return route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, missionAllowance: { limit: 10, remaining: 3 }, notes: [], sessions: [{ learningSessionId: "synthetic-mission",
       learningSessionStatus: "interrupted", noteGenerationStatus: "idle", demoScenario: "voice", learningSessionStartedAt: "2026-11-15T01:00:00.000Z", learningSessionEndedAt: null,
       mission: { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "practice", languageLevel: "C", missionEndReason: null, finalRouteId: null }, missionResult: null }] } });
     starts.push(route.request().postDataJSON());
@@ -82,7 +82,7 @@ test("an open mission resumes with its stored mode and level", async ({ page }) 
 
 test("the result page separates outcome, score, exclusions and criterion evidence", async ({ page }) => {
   const area = (earnedHalf: number, maxHalf: number) => ({ earnedHalf, maxHalf });
-  await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, notes: [], sessions: [{ learningSessionId: "synthetic-mission",
+  await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, missionAllowance: { limit: 10, remaining: 3 }, notes: [], sessions: [{ learningSessionId: "synthetic-mission",
     learningSessionStatus: "ended", noteGenerationStatus: "ready", demoScenario: "voice", learningSessionStartedAt: "2026-11-15T01:00:00.000Z", learningSessionEndedAt: "2026-11-15T01:05:00.000Z",
     mission: { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B1", missionEndReason: "goal_completed", finalRouteId: "refund" },
     // 67/84: goal 50/50 (10 excluded), grammar 5/10, vocabulary 4/10, organization 4/7 (3 excluded), interaction 4/7 (3 excluded) → 79.8%, below 80%.
@@ -114,7 +114,7 @@ test("a credited mission shows its stored achievement date and home counts disti
     mission: { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B1", missionEndReason, finalRouteId: missionEndReason === "goal_completed" ? "remake" : null },
     missionResult: { evaluationStatus: "ready", areaScores: { goal: area(120, 120), grammar: area(20, 20), vocabulary: area(20, 20), organization: area(20, 20), interaction: area(20, 20) },
       totalEarnedHalf: 200, totalMaxHalf: 200, meetsThreshold: true, achievementDate, criteria: null } });
-  await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, notes: [], achievementDayCount: 2,
+  await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, missionAllowance: { limit: 10, remaining: 3 }, notes: [], achievementDayCount: 2,
     sessions: [session("credited", "2026-11-18"), session("expired", null, "resume_expired")] } }));
   // The stored date is shown as-is, not re-derived from the browser's zone.
   await page.goto("/results/credited");
@@ -124,4 +124,25 @@ test("a credited mission shows its stored achievement date and home counts disti
   await page.goto("/home");
   await expect(page.getByLabel("학습 요약")).toContainText("2달성 일수");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+
+test("mission starts show the remaining count and are blocked at zero while a resume stays available", async ({ page }) => {
+  let allowance = { limit: 10, remaining: 3 }, sessions: unknown[] = [];
+  await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, missionAllowance: allowance, achievementDayCount: 0, notes: [], sessions } }));
+  await fakeMicrophone(page);
+  await page.goto("/talk");
+  await expect(page.getByText("남은 미션 3회", { exact: false })).toBeVisible();
+  allowance = { limit: 10, remaining: 0 };
+  await page.reload();
+  await expect(page.getByText("남은 미션 횟수가 없어 새 미션을 시작할 수 없어요.")).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await expect(page.getByRole("button", { name: /미션 시작/ })).toBeDisabled();
+  // An open mission already holds its count, so it can be resumed at zero.
+  sessions = [{ learningSessionId: "synthetic-mission", learningSessionStatus: "interrupted", noteGenerationStatus: "idle", demoScenario: "voice", learningSessionStartedAt: "2026-11-19T01:00:00.000Z", learningSessionEndedAt: null,
+    mission: { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "practice", languageLevel: "B1", missionEndReason: null, finalRouteId: null }, missionResult: null }];
+  await page.reload();
+  await page.getByRole("checkbox").check();
+  await expect(page.getByRole("button", { name: /이어서 하기/ })).toBeEnabled();
+  await expect(page.getByText("남은 미션 횟수가 없어", { exact: false })).toHaveCount(0);
 });

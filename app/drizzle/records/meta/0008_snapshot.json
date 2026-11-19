@@ -1,0 +1,1272 @@
+{
+  "id": "c307dd6e-4022-4609-bbf6-cbbd505b6d1c",
+  "prevId": "3dd50f15-96d9-497e-8eb1-693404af5923",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.email_auth_rate_limits": {
+      "name": "email_auth_rate_limits",
+      "schema": "",
+      "columns": {
+        "email_address": {
+          "name": "email_address",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "last_auth_email_requested_at": {
+          "name": "last_auth_email_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.email_auth_requests": {
+      "name": "email_auth_requests",
+      "schema": "",
+      "columns": {
+        "email_auth_request_id": {
+          "name": "email_auth_request_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email_address": {
+          "name": "email_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "authentication_purpose": {
+          "name": "authentication_purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_link_token_hash": {
+          "name": "auth_link_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requesting_login_session_id": {
+          "name": "requesting_login_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "auth_link_issued_at": {
+          "name": "auth_link_issued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_link_expires_at": {
+          "name": "auth_link_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_link_used_at": {
+          "name": "auth_link_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "auth_link_invalidated_at": {
+          "name": "auth_link_invalidated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email_send_status": {
+          "name": "email_send_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        }
+      },
+      "indexes": {
+        "email_auth_request_email_purpose": {
+          "name": "email_auth_request_email_purpose",
+          "columns": [
+            {
+              "expression": "email_address",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "authentication_purpose",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "email_auth_requests_auth_link_token_hash_unique": {
+          "name": "email_auth_requests_auth_link_token_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "auth_link_token_hash"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "email_auth_request_purpose": {
+          "name": "email_auth_request_purpose",
+          "value": "\"email_auth_requests\".\"authentication_purpose\" in ('login', 'account_deletion')"
+        },
+        "email_auth_request_target": {
+          "name": "email_auth_request_target",
+          "value": "(\"email_auth_requests\".\"authentication_purpose\" = 'login' and \"email_auth_requests\".\"requesting_login_session_id\" is null) or (\"email_auth_requests\".\"authentication_purpose\" = 'account_deletion' and \"email_auth_requests\".\"requesting_login_session_id\" is not null)"
+        },
+        "email_auth_request_send_status": {
+          "name": "email_auth_request_send_status",
+          "value": "\"email_auth_requests\".\"email_send_status\" in ('pending', 'smtp_accepted', 'failed_or_unknown')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.google_identities": {
+      "name": "google_identities",
+      "schema": "",
+      "columns": {
+        "google_subject": {
+          "name": "google_subject",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "google_email_address": {
+          "name": "google_email_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "google_identity_linked_at": {
+          "name": "google_identity_linked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "google_identities_user_id_users_user_id_fk": {
+          "name": "google_identities_user_id_users_user_id_fk",
+          "tableFrom": "google_identities",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "google_identities_user_id_unique": {
+          "name": "google_identities_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.learning_mission_result_details": {
+      "name": "learning_mission_result_details",
+      "schema": "",
+      "columns": {
+        "learning_session_id": {
+          "name": "learning_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "judgements": {
+          "name": "judgements",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "detail_retention_expires_at": {
+          "name": "detail_retention_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "learning_mission_detail_user_expiry": {
+          "name": "learning_mission_detail_user_expiry",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "detail_retention_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "learning_mission_result_details_user_id_users_user_id_fk": {
+          "name": "learning_mission_result_details_user_id_users_user_id_fk",
+          "tableFrom": "learning_mission_result_details",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "learning_mission_detail_session_owner": {
+          "name": "learning_mission_detail_session_owner",
+          "tableFrom": "learning_mission_result_details",
+          "tableTo": "learning_sessions",
+          "columnsFrom": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "columnsTo": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.learning_mission_results": {
+      "name": "learning_mission_results",
+      "schema": "",
+      "columns": {
+        "learning_session_id": {
+          "name": "learning_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evaluation_status": {
+          "name": "evaluation_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "area_scores": {
+          "name": "area_scores",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_earned_half": {
+          "name": "total_earned_half",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_max_half": {
+          "name": "total_max_half",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meets_threshold": {
+          "name": "meets_threshold",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evaluated_at": {
+          "name": "evaluated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "achievement_date": {
+          "name": "achievement_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "learning_mission_result_user": {
+          "name": "learning_mission_result_user",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "learning_mission_result_user_achievement": {
+          "name": "learning_mission_result_user_achievement",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "achievement_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"learning_mission_results\".\"achievement_date\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "learning_mission_results_user_id_users_user_id_fk": {
+          "name": "learning_mission_results_user_id_users_user_id_fk",
+          "tableFrom": "learning_mission_results",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "learning_mission_result_session_owner": {
+          "name": "learning_mission_result_session_owner",
+          "tableFrom": "learning_mission_results",
+          "tableTo": "learning_sessions",
+          "columnsFrom": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "columnsTo": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "learning_mission_result_status": {
+          "name": "learning_mission_result_status",
+          "value": "\"learning_mission_results\".\"evaluation_status\" in ('pending', 'ready', 'skipped', 'unavailable')"
+        },
+        "learning_mission_result_scores": {
+          "name": "learning_mission_result_scores",
+          "value": "(\"learning_mission_results\".\"evaluation_status\" = 'ready') = (\"learning_mission_results\".\"area_scores\" is not null and \"learning_mission_results\".\"total_earned_half\" is not null and \"learning_mission_results\".\"total_max_half\" is not null and \"learning_mission_results\".\"evaluated_at\" is not null)"
+        },
+        "learning_mission_result_range": {
+          "name": "learning_mission_result_range",
+          "value": "\"learning_mission_results\".\"total_earned_half\" is null or (\"learning_mission_results\".\"total_earned_half\" >= 0 and \"learning_mission_results\".\"total_earned_half\" <= \"learning_mission_results\".\"total_max_half\")"
+        },
+        "learning_mission_result_threshold": {
+          "name": "learning_mission_result_threshold",
+          "value": "\"learning_mission_results\".\"meets_threshold\" is null or (\"learning_mission_results\".\"evaluation_status\" = 'ready' and \"learning_mission_results\".\"total_max_half\" > 0)"
+        },
+        "learning_mission_result_achievement": {
+          "name": "learning_mission_result_achievement",
+          "value": "\"learning_mission_results\".\"achievement_date\" is null or (\"learning_mission_results\".\"meets_threshold\" is true and \"learning_mission_results\".\"achievement_date\" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.learning_session_missions": {
+      "name": "learning_session_missions",
+      "schema": "",
+      "columns": {
+        "learning_session_id": {
+          "name": "learning_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mission_id": {
+          "name": "mission_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "definition_version": {
+          "name": "definition_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rubric_version": {
+          "name": "rubric_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mission_mode": {
+          "name": "mission_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "language_level": {
+          "name": "language_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mission_end_reason": {
+          "name": "mission_end_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "final_route_id": {
+          "name": "final_route_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mission_time_zone": {
+          "name": "mission_time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Asia/Seoul'"
+        }
+      },
+      "indexes": {
+        "learning_mission_user": {
+          "name": "learning_mission_user",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "learning_session_missions_user_id_users_user_id_fk": {
+          "name": "learning_session_missions_user_id_users_user_id_fk",
+          "tableFrom": "learning_session_missions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "learning_mission_session_owner": {
+          "name": "learning_mission_session_owner",
+          "tableFrom": "learning_session_missions",
+          "tableTo": "learning_sessions",
+          "columnsFrom": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "columnsTo": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "learning_mission_mode": {
+          "name": "learning_mission_mode",
+          "value": "\"learning_session_missions\".\"mission_mode\" in ('practice', 'real')"
+        },
+        "learning_mission_level": {
+          "name": "learning_mission_level",
+          "value": "\"learning_session_missions\".\"language_level\" in ('A1', 'A2', 'B1', 'B2', 'C')"
+        },
+        "learning_mission_versions": {
+          "name": "learning_mission_versions",
+          "value": "\"learning_session_missions\".\"definition_version\" >= 1 and \"learning_session_missions\".\"rubric_version\" >= 1"
+        },
+        "learning_mission_end_reason": {
+          "name": "learning_mission_end_reason",
+          "value": "\"learning_session_missions\".\"mission_end_reason\" in ('goal_completed', 'no_progress_failed', 'user_ended', 'resume_expired')"
+        },
+        "learning_mission_final_route": {
+          "name": "learning_mission_final_route",
+          "value": "\"learning_session_missions\".\"final_route_id\" is null or \"learning_session_missions\".\"mission_end_reason\" is not null"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.learning_session_notes": {
+      "name": "learning_session_notes",
+      "schema": "",
+      "columns": {
+        "learning_session_id": {
+          "name": "learning_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "learning_end_date_kst": {
+          "name": "learning_end_date_kst",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note_markdown": {
+          "name": "note_markdown",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note_retention_expires_at": {
+          "name": "note_retention_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "learning_note_user_expiry": {
+          "name": "learning_note_user_expiry",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "note_retention_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "learning_session_notes_user_id_users_user_id_fk": {
+          "name": "learning_session_notes_user_id_users_user_id_fk",
+          "tableFrom": "learning_session_notes",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "learning_note_session_owner": {
+          "name": "learning_note_session_owner",
+          "tableFrom": "learning_session_notes",
+          "tableTo": "learning_sessions",
+          "columnsFrom": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "columnsTo": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.learning_sessions": {
+      "name": "learning_sessions",
+      "schema": "",
+      "columns": {
+        "learning_session_id": {
+          "name": "learning_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "learning_session_status": {
+          "name": "learning_session_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "confirmed_save_sequence_number": {
+          "name": "confirmed_save_sequence_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "learning_session_started_at": {
+          "name": "learning_session_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "learning_session_interrupted_at": {
+          "name": "learning_session_interrupted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "learning_session_ended_at": {
+          "name": "learning_session_ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transcript_delete_deadline_at": {
+          "name": "transcript_delete_deadline_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "note_generation_status": {
+          "name": "note_generation_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'idle'"
+        },
+        "learning_connection_token_hash": {
+          "name": "learning_connection_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "learning_connection_expires_at": {
+          "name": "learning_connection_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "demo_scenario": {
+          "name": "demo_scenario",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'correction'"
+        }
+      },
+      "indexes": {
+        "one_open_learning_session": {
+          "name": "one_open_learning_session",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"learning_sessions\".\"learning_session_status\" in ('active', 'interrupted')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "learning_session_owner": {
+          "name": "learning_session_owner",
+          "columns": [
+            {
+              "expression": "learning_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "learning_session_user": {
+          "name": "learning_session_user",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "learning_sessions_user_id_users_user_id_fk": {
+          "name": "learning_sessions_user_id_users_user_id_fk",
+          "tableFrom": "learning_sessions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "learning_session_status": {
+          "name": "learning_session_status",
+          "value": "\"learning_sessions\".\"learning_session_status\" in ('active', 'interrupted', 'ended')"
+        },
+        "confirmed_save_sequence_nonnegative": {
+          "name": "confirmed_save_sequence_nonnegative",
+          "value": "\"learning_sessions\".\"confirmed_save_sequence_number\" >= 0"
+        },
+        "note_generation_status": {
+          "name": "note_generation_status",
+          "value": "\"learning_sessions\".\"note_generation_status\" in ('idle', 'waiting_save', 'pending', 'ready', 'empty', 'expired')"
+        },
+        "learning_demo_scenario": {
+          "name": "learning_demo_scenario",
+          "value": "\"learning_sessions\".\"demo_scenario\" in ('correction', 'conversation', 'voice')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.login_sessions": {
+      "name": "login_sessions",
+      "schema": "",
+      "columns": {
+        "login_session_id": {
+          "name": "login_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "login_token_hash": {
+          "name": "login_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "login_session_created_at": {
+          "name": "login_session_created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_authenticated_activity_at": {
+          "name": "last_authenticated_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "login_session_expires_at": {
+          "name": "login_session_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "login_session_invalidated_at": {
+          "name": "login_session_invalidated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "account_deletion_authorization_expires_at": {
+          "name": "account_deletion_authorization_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "account_deletion_authorization_used_at": {
+          "name": "account_deletion_authorization_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "login_session_user": {
+          "name": "login_session_user",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "login_sessions_user_id_users_user_id_fk": {
+          "name": "login_sessions_user_id_users_user_id_fk",
+          "tableFrom": "login_sessions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "login_sessions_login_token_hash_unique": {
+          "name": "login_sessions_login_token_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "login_token_hash"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "account_deletion_authorization_use": {
+          "name": "account_deletion_authorization_use",
+          "value": "\"login_sessions\".\"account_deletion_authorization_used_at\" is null or \"login_sessions\".\"account_deletion_authorization_expires_at\" is not null"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.mission_usage_holds": {
+      "name": "mission_usage_holds",
+      "schema": "",
+      "columns": {
+        "learning_session_id": {
+          "name": "learning_session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "usage_status": {
+          "name": "usage_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'held'"
+        },
+        "held_at": {
+          "name": "held_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "mission_usage_user_status": {
+          "name": "mission_usage_user_status",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "usage_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mission_usage_one_held": {
+          "name": "mission_usage_one_held",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"mission_usage_holds\".\"usage_status\" = 'held'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "mission_usage_holds_user_id_users_user_id_fk": {
+          "name": "mission_usage_holds_user_id_users_user_id_fk",
+          "tableFrom": "mission_usage_holds",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mission_usage_status": {
+          "name": "mission_usage_status",
+          "value": "\"mission_usage_holds\".\"usage_status\" in ('held', 'confirmed', 'released')"
+        },
+        "mission_usage_settled": {
+          "name": "mission_usage_settled",
+          "value": "(\"mission_usage_holds\".\"usage_status\" = 'held') = (\"mission_usage_holds\".\"settled_at\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.scheduled_jobs": {
+      "name": "scheduled_jobs",
+      "schema": "",
+      "columns": {
+        "scheduled_job_id": {
+          "name": "scheduled_job_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "target_user_id": {
+          "name": "target_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_learning_session_id": {
+          "name": "target_learning_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "job_type": {
+          "name": "job_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scheduled_run_at": {
+          "name": "scheduled_run_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "scheduled_account_job_target": {
+          "name": "scheduled_account_job_target",
+          "columns": [
+            {
+              "expression": "job_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"scheduled_jobs\".\"target_learning_session_id\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "scheduled_session_job_target": {
+          "name": "scheduled_session_job_target",
+          "columns": [
+            {
+              "expression": "job_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_learning_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"scheduled_jobs\".\"target_learning_session_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "scheduled_job_user": {
+          "name": "scheduled_job_user",
+          "columns": [
+            {
+              "expression": "target_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "scheduled_jobs_target_user_id_users_user_id_fk": {
+          "name": "scheduled_jobs_target_user_id_users_user_id_fk",
+          "tableFrom": "scheduled_jobs",
+          "tableTo": "users",
+          "columnsFrom": [
+            "target_user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "scheduled_job_session_owner": {
+          "name": "scheduled_job_session_owner",
+          "tableFrom": "scheduled_jobs",
+          "tableTo": "learning_sessions",
+          "columnsFrom": [
+            "target_learning_session_id",
+            "target_user_id"
+          ],
+          "columnsTo": [
+            "learning_session_id",
+            "user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "scheduled_job_target": {
+          "name": "scheduled_job_target",
+          "value": "(\"scheduled_jobs\".\"job_type\" = 'delete_account' and \"scheduled_jobs\".\"target_learning_session_id\" is null) or (\"scheduled_jobs\".\"job_type\" = 'note' and \"scheduled_jobs\".\"target_learning_session_id\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email_address": {
+          "name": "email_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_created_at": {
+          "name": "account_created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "account_deletion_confirmed_at": {
+          "name": "account_deletion_confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_email_address_unique": {
+          "name": "users_email_address_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email_address"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

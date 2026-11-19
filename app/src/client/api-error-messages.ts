@@ -6,6 +6,8 @@ export const apiErrorMessages: Record<string, string> = {
   INVALID_LINK: "유효한 인증 링크가 아닙니다.", EXPIRED_LINK: "인증 링크가 만료됐습니다.", USED_LINK: "이미 사용한 인증 링크입니다.",
   REPLACED_LINK: "새 요청으로 이전 링크가 무효화됐습니다.", LOGOUT_FIRST: "다른 계정으로 로그인돼 있습니다. 먼저 로그아웃해 주세요.",
   ORIGINAL_BROWSER_REQUIRED: "탈퇴 요청을 시작한 브라우저에서 확인해 주세요.", CONFIRM_DELETE_FIRST: "탈퇴 전에 이메일 본인 확인이 필요합니다.",
+  MISSION_ALLOWANCE_EXHAUSTED: "남은 미션 횟수가 없어 새 미션을 시작할 수 없습니다. 진행 중인 미션은 이어서 할 수 있습니다.",
+  MISSION_ALLOWANCE_MISCONFIGURED: "미션 횟수 설정을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
   ALREADY_CONNECTED: "다른 탭이나 기기에서 대화가 진행 중입니다. 기존 연결이 중단된 뒤 이어갈 수 있습니다.",
   LEARNING_MODE_CONFLICT: "다른 방식의 학습이 중단돼 있습니다. 기존 학습 화면에서 이어서 하거나 종료해 주세요.",
   INVALID_MISSION: "선택한 미션을 시작할 수 없습니다. 미션 목록을 다시 확인해 주세요.",

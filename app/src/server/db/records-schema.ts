@@ -111,3 +111,18 @@ export const learningMissionResultDetails = pgTable("learning_mission_result_det
   foreignKey({ name: "learning_mission_detail_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
   index("learning_mission_detail_user_expiry").on(t.userId, t.detailRetentionExpiresAt),
 ]);
+/**
+ * Mission count ledger (DEC-069, DEC-096). One row per mission start: held at start, then confirmed
+ * when a learner utterance was confirmed by the end, or released otherwise. Kept apart from the
+ * learning-record lifetime (no session FK), so expiring records never restores a count; removed with the account.
+ */
+export const missionUsageHolds = pgTable("mission_usage_holds", {
+  learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
+  usageStatus: text("usage_status").notNull().default("held"), heldAt: time("held_at").notNull(), settledAt: time("settled_at"),
+}, t => [
+  index("mission_usage_user_status").on(t.userId, t.usageStatus),
+  // One open session per account means at most one unsettled hold.
+  uniqueIndex("mission_usage_one_held").on(t.userId).where(sql`${t.usageStatus} = 'held'`),
+  check("mission_usage_status", sql`${t.usageStatus} in ('held', 'confirmed', 'released')`),
+  check("mission_usage_settled", sql`(${t.usageStatus} = 'held') = (${t.settledAt} is null)`),
+]);

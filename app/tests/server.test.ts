@@ -11,7 +11,7 @@ import { consumeLink, deleteAccount, dbNow, digest, inspectLink, logout, request
 import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
 import { completeGoogleAuth, unlinkGoogle, type GoogleOAuthState } from "../src/server/google-auth";
-import { googleIdentities, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "../src/server/db/records-schema";
+import { googleIdentities, learningSessionMissions, learningMissionResults, learningMissionResultDetails, missionUsageHolds } from "../src/server/db/records-schema";
 import { currentMission } from "../src/mission/definitions";
 import { localDateIn } from "../src/mission/achievement";
 import type { ExtractionGenerate } from "../src/voice/note-extraction";
@@ -643,6 +643,74 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;
       }
+    }
+  });
+  it("holds one mission count at start, confirms it only when the learner spoke and blocks new starts at zero", async () => {
+    const saved = Object.fromEntries(["TALKIE_VOICE_TEST", "GEMINI_FREE_TIER_CONFIRMED", "GOOGLE_API_KEY", "TALKIE_MISSION_ALLOWANCE"].map(k => [k, process.env[k]]));
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic"; process.env.TALKIE_MISSION_ALLOWANCE = "2";
+    const { rubric } = currentMission("cafe-wrong-order")!;
+    const turns = [{ turnId: "a0", requestId: "a0", role: "assistant", text: "Hi, how can I help?" }, { turnId: "u1", requestId: "u1", role: "user", text: "My latte is wrong." }];
+    const greetingOnly = turns.slice(0, 1);
+    const note: ExtractionGenerate = async () => JSON.stringify({ contextItems: [], detailItems: [{ kind: "summary", text: "Cafe complaint", evidence: [{ turnId: "u1", role: "user", text: "My latte is wrong." }] }] });
+    const evaluate: ExtractionGenerate = async () => JSON.stringify({ judgements: [...rubric.goalCriteria, ...rubric.languageCriteria].map(c => ({ criterionId: c.criterionId, verdict: "met", evidence: [{ turnId: "u1", text: "My latte is wrong" }], counterEvidence: [], reason: "합성 판정" })) });
+    const mission = { missionId: "cafe-wrong-order", missionMode: "practice" as const, languageLevel: "B1" as const };
+    const holds = async (userId: string) => (await databases().records.select().from(missionUsageHolds).where(eq(missionUsageHolds.userId, userId))).map(h => h.usageStatus).sort();
+    const remaining = async (raw: string) => (await listLearningRecords(raw)).missionAllowance.remaining;
+    const finish = async (raw: string, s: { learningSessionId: string; learningConnectionToken: string }, list: typeof turns) => {
+      if (list.length) await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns: list });
+      await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+      await completeLearningNote(raw, s.learningSessionId, { generate: note, evaluate }).catch(error => assert.match(String(error), /NOTE_PENDING/));
+    };
+    try {
+      const raw = await login("count@example.test"), [user] = await databases().records.select().from(users).where(eq(users.emailAddress, "count@example.test"));
+      assert.deepEqual((await listLearningRecords(raw)).missionAllowance, { limit: 2, remaining: 2 });
+      // Held at start; resuming the same mission holds nothing more.
+      const first = await startLearning(raw, "voice", mission);
+      assert.equal(await remaining(raw), 1);
+      await updateLearningHeartbeat(raw, first.learningSessionId, first.learningConnectionToken, true);
+      const resumed = await startLearning(raw, "voice", mission);
+      assert.equal(resumed.learningSessionId, first.learningSessionId);
+      assert.deepEqual(await holds(user.userId), ["held"]);
+      await finish(raw, resumed, turns);
+      assert.deepEqual(await holds(user.userId), ["confirmed"]);
+      assert.equal(await remaining(raw), 1);
+      // Only the greeting was saved: the hold is released and the count comes back.
+      const silent = await startLearning(raw, "voice", mission);
+      assert.equal(await remaining(raw), 0);
+      await finish(raw, silent, greetingOnly);
+      assert.deepEqual(await holds(user.userId), ["confirmed", "released"]);
+      assert.equal(await remaining(raw), 1);
+      const last = await startLearning(raw, "voice", mission);
+      await finish(raw, last, turns);
+      assert.equal(await remaining(raw), 0);
+      // At zero a new mission is refused before any session exists; a legacy free session is not counted.
+      await assert.rejects(startLearning(raw, "voice", mission), /MISSION_ALLOWANCE_EXHAUSTED/);
+      assert.equal((await listLearningRecords(raw)).sessions.filter(s => s.learningSessionStatus !== "ended").length, 0);
+      const free = await startLearning(raw, "voice");
+      await endLearning(raw, free.learningSessionId, free.learningConnectionToken);
+      assert.deepEqual(await holds(user.userId), ["confirmed", "confirmed", "released"]);
+
+      // Resume expiry keeps the count when the learner spoke (no refund, PRD 6).
+      const idleRaw = await login("count-idle@example.test"), idle = await startLearning(idleRaw, "voice", mission);
+      await saveLearning(idleRaw, idle.learningSessionId, idle.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns });
+      await databases().records.update(learningSessions).set({ learningSessionStatus: "interrupted", learningSessionInterruptedAt: new Date(Date.now() - 86_400_001) }).where(eq(learningSessions.learningSessionId, idle.learningSessionId));
+      await maintenance({ generate: note, evaluate });
+      const [idleHold] = await databases().records.select().from(missionUsageHolds).where(eq(missionUsageHolds.learningSessionId, idle.learningSessionId));
+      assert.equal(idleHold.usageStatus, "confirmed");
+
+      // Two concurrent starts with one count left: exactly one succeeds and holds.
+      process.env.TALKIE_MISSION_ALLOWANCE = "1";
+      const raceRaw = await login("count-race@example.test"), [raceUser] = await databases().records.select().from(users).where(eq(users.emailAddress, "count-race@example.test"));
+      const results = await Promise.allSettled([startLearning(raceRaw, "voice", mission), startLearning(raceRaw, "voice", mission)]);
+      const started = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof startLearning>>> => r.status === "fulfilled");
+      assert.ok(started.length >= 1 && new Set(started.map(r => r.value.learningSessionId)).size === 1, "Both starts never create two sessions");
+      assert.deepEqual(await holds(raceUser.userId), ["held"]);
+      await assert.rejects(databases().records.insert(missionUsageHolds).values({ learningSessionId: randomUUID(), userId: raceUser.userId, heldAt: new Date() }),
+        postgresFailure("23505", "mission_usage_one_held"), "At most one unsettled hold per account");
+      process.env.TALKIE_MISSION_ALLOWANCE = "-1";
+      await assert.rejects(listLearningRecords(raceRaw), /MISSION_ALLOWANCE_MISCONFIGURED/);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     }
   });
   it("reads retained difficulty outside the review window and keeps topic context isolated", async () => {

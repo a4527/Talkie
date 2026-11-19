@@ -57,6 +57,13 @@
       "when": 1795052645175,
       "tag": "0007_mission_achievement_days",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795063196299,
+      "tag": "0008_mission_usage_holds",
+      "breakpoints": true
     }
   ]
 }

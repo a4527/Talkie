@@ -2,7 +2,7 @@
 
 미션 전환(승인·미구현): 미션 정의/진행/평가·난이도 버전·횟수 차감·일수 집계의 데이터 확장은 [미션 설계](MISSIONS.md)를 따른다. 시간 이용권 관련 DEC-062/063 제안은 과거 경계이며 신규 시간 이용권 구현 요구가 아니다. 첫 미션의 세션 고정·결과 집계/상세 테이블은 [최소 연결 계약](MISSIONS.md#최소-연결-계약)에 승인·미구현으로 둔다. 정확한 스키마·이관은 구현 때 확정한다.
 
-갱신일: 2026-11-19. 로컬 합성 인증·저장 구현의 현행 데이터 모델이다. [제품 보관·삭제 정책](../PRD.md#8-저장-데이터와-학습-노트)을 따른다. Google 매핑은 아래 google_identities에 구현돼 있으며 실제 OAuth 클라이언트 검증과 유료 기록 전환은 남는다. 미션 횟수 상태의 저장·보존·복원 계약은 [미션 설계](MISSIONS.md#연결과-횟수)의 후속 범위이며 과거 DEC-063의 시간 이용권 테이블을 현행 구현 대상으로 두지 않는다.
+갱신일: 2026-11-19. 로컬 합성 인증·저장 구현의 현행 데이터 모델이다. [제품 보관·삭제 정책](../PRD.md#8-저장-데이터와-학습-노트)을 따른다. Google 매핑은 아래 google_identities에 구현돼 있으며 실제 OAuth 클라이언트 검증과 유료 기록 전환은 남는다. 미션 횟수 원장은 아래 `mission_usage_holds`에 구현했고(DEC-096) 백업 복원 뒤 재적용·보존 계약은 [미션 설계](MISSIONS.md#연결과-횟수)의 후속 범위이며 과거 DEC-063의 시간 이용권 테이블을 현행 구현 대상으로 두지 않는다.
 
 ## 저장소와 스키마 경계
 
@@ -21,6 +21,7 @@
 | 지속 | `scheduled_jobs` | 계정/학습 세션 작업의 대상·종류·실행 시각. 소유자 FK·대상별 조건부 고유성·종류/대상 CHECK |
 | 지속 | `learning_session_missions` | 학습 세션 1:1·소유자 복합 FK cascade. 시작 시 고정한 미션 ID·정의/평가표 버전·모드·수준과 종료 시 1회 기록하는 종료 사유·최종 경로. 모드/수준/버전/종료 사유 CHECK, 최종 경로는 종료 사유가 있을 때만. 시작 시 고정한 기기 IANA 시간대(`mission_time_zone`, 기존 행·미전송 기본 `Asia/Seoul`, DEC-095). 행이 없으면 구형 자유 대화 세션([미션 계약](MISSIONS.md#최소-연결-계약)) |
 | 지속 | `learning_mission_results` | 미션 결과 집계(DEC-088). 학습 세션 1:1·소유자 복합 FK cascade. 평가 상태 `pending·ready·skipped·unavailable`, 영역별(`area_scores` jsonb)/전체 획득·평가 만점 반점 정수, 80% 여부, 평가 시각. `ready`일 때만 점수가 있고 80% 여부는 평가 만점이 0보다 클 때만. 달성 일수로 인정된 현지 날짜(`achievement_date`, 80% 이상일 때만 CHECK, 평가 확정 때 1회 기록, DEC-095)와 사용자별 부분 색인. 사용자 발화 원문 없음. 탈퇴 전까지 보관 |
+| 지속 | `mission_usage_holds` | 미션 횟수 원장(DEC-096). 학습 세션 ID 키·사용자 FK cascade(학습 세션 FK 없음, 기록 만료와 분리). 상태 `held·confirmed·released`, 예약·정산 시각(`held`일 때만 정산 시각 없음 CHECK), 계정당 `held` 하나의 부분 유일 색인. 잔여량은 한도에서 `held`·`confirmed` 수를 뺀 값([미션 설계](MISSIONS.md#연결과-횟수)) |
 | 지속 | `learning_mission_result_details` | 기준별 판정·근거 인용·반대 근거·사유(jsonb). 학습 세션 1:1·소유자 복합 FK cascade. 노트와 같은 만료 시각에 정리 작업이 삭제 |
 | 지속 | `google_identities` | Google `sub`(PK)·연결 사용자(고유, FK cascade)·연결 시 Google 이메일·연결 시각. 계정당·`sub`당 하나([DEC-067](../adr/067-GOOGLE-ACCOUNT-LINKING-AND-REAUTH.md)) |
 | 임시 | `transcript_session_states` | 학습/사용자 ID·생성/첫 저장·삭제 기한/완료 이력. 상태와 삭제 사유의 조합 CHECK. 지속 DB에 대한 FK는 없음 |
