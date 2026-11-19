@@ -30,7 +30,7 @@ test("keyboard learning flow, retries, note preview and actual Markdown download
   const downloadButton = page.getByRole("button", { name: "Markdown 다운로드" });
   await expect(downloadButton).toBeVisible();
   await page.getByText("노트 내용 보기").click();
-  await expect(page.locator("pre")).toContainText("I go to a cafe yesterday.");
+  await expect(page.locator("details", { hasText: "노트 내용 보기" }).locator("pre")).toContainText("I go to a cafe yesterday.");
   const event = page.waitForEvent("download");
   await downloadButton.click();
   const download = await event;
