@@ -15,8 +15,24 @@ function renderExtractionDetails(items: readonly NoteDetailItem[]) {
 
 export type VoiceNoteExtraction = { details: readonly NoteDetailItem[]; incomplete: boolean };
 
+/**
+ * Concise mission note (DEC-098): every delivered correction is kept; AI-selected items are capped per kind
+ * and praise/adapted examples are left out. Scores stay on the result screen, not in the note.
+ */
+export const MISSION_NOTE_LIMITS = { aiReview: 3, summary: 1, perDetailKind: 3 } as const;
+const MISSION_DETAIL_KINDS: readonly NoteDetailItem["kind"][] = ["summary", "correction", "question_expression", "key_expression", "next_review"];
+function capByKind<T>(items: readonly T[], kind: (item: T) => string, limit: (kind: string) => number | undefined) {
+  const counts = new Map<string, number>();
+  return items.filter(item => {
+    const k = kind(item), max = limit(k), n = counts.get(k) ?? 0;
+    if (max !== undefined && n >= max) return false;
+    counts.set(k, n + 1);
+    return true;
+  });
+}
+
 /** No provider call here. Optional extraction results are validated again before rendering. */
-export function buildVoiceNoteMarkdown(snapshot: ConversationSnapshot, endedAt: string, candidates: readonly NoteContextItem[] = [], extraction?: VoiceNoteExtraction) {
+export function buildVoiceNoteMarkdown(snapshot: ConversationSnapshot, endedAt: string, candidates: readonly NoteContextItem[] = [], extraction?: VoiceNoteExtraction, options: { mission?: boolean } = {}) {
   const user = snapshot.turns.filter(t => t.role === "user");
   if (!user.length) return null;
   const corrections: NoteContextItem[] = snapshot.corrections.flatMap(c => {
@@ -31,11 +47,17 @@ export function buildVoiceNoteMarkdown(snapshot: ConversationSnapshot, endedAt: 
         ...attempts.map(a => { const turn = user.find(t => t.turnId === a.turnId)!; return { turnId: turn.turnId, role: turn.role, text: turn.text }; })],
       // Existing snapshots have no per-turn timestamp. Do not invent a practice date from the note date.
     }];
-  }).slice(-3);
-  const proposed = [...candidates, ...corrections];
+  });
+  // Free conversation keeps its earlier limit; a mission note keeps every delivered correction (DEC-098).
+  const kept = options.mission ? corrections : corrections.slice(-3);
+  const chosen = options.mission ? capByKind(candidates, c => c.kind, k => k === "review" ? MISSION_NOTE_LIMITS.aiReview : undefined) : candidates;
+  const proposed = [...chosen, ...kept];
   const items = validateContextItems(proposed, snapshot);
   const missing = snapshot.hasConversationGaps || items.length !== proposed.length || extraction?.incomplete === true;
-  const details = extraction?.details ?? [];
+  const details = options.mission
+    ? capByKind((extraction?.details ?? []).filter(d => MISSION_DETAIL_KINDS.includes(d.kind) && !d.adapted), d => d.kind,
+      k => k === "summary" ? MISSION_NOTE_LIMITS.summary : MISSION_NOTE_LIMITS.perDetailKind)
+    : extraction?.details ?? [];
   return [`# ${formatKstDate(endedAt)} 영어 학습 노트`, NOTE_FORMAT,
     extraction ? "비공개 음성 통합 시험 · AI가 저장된 대화에서 선별한 내용이며 근거 인용만 앱이 검증했습니다. 언어 평가의 정확성은 보장하지 않습니다."
       : "비공개 음성 통합 시험 · 저장된 발화와 재생 완료된 AI 교정으로 구성했습니다. 전체 대화의 AI 선별·요약은 아직 연결하지 않았습니다.",

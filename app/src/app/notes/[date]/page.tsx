@@ -3,12 +3,12 @@ import Link from "next/link";
 import { use } from "react";
 import { downloadMarkdown, formatKoreanDate, useRecords } from "../../../client/app";
 import { AppFooter, AppHeader } from "../../../components/app-header";
-import { NoteView } from "../../../components/note-view";
+import { ReviewableNote } from "../../../components/reviewable-note";
 
 export default function NoteDay({ params }: { params: Promise<{ date: string }> }) {
   const { date } = use(params);
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(date);
-  const [records] = useRecords();
+  const [records, reload] = useRecords();
   const notes = records.status === "ready" ? records.value.notes.filter(n => n.learningEndDateKst === date) : [];
   return <main className="shell">
     <AppHeader />
@@ -22,7 +22,7 @@ export default function NoteDay({ params }: { params: Promise<{ date: string }> 
     {records.status === "ready" && !notes.length && <div className="card empty-card"><p>이 날짜의 노트가 없거나 보관 기간이 지났어요.</p></div>}
     {notes.map((note, index) => <article key={note.learningSessionId} className="card note-article" aria-label={`대화 ${index + 1}의 노트`}>
       <span className="eyebrow">CONVERSATION {String(index + 1).padStart(2, "0")}</span>
-      <NoteView markdown={note.noteMarkdown} idPrefix={`n${index + 1}`} />
+      <ReviewableNote note={note} idPrefix={`n${index + 1}`} onChanged={reload} />
     </article>)}
     <AppFooter />
   </main>;

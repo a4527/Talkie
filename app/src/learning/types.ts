@@ -107,7 +107,8 @@ export interface LearningRecordsResponse {
   missionAllowance: { limit: number; remaining: number };
   /** Distinct local dates credited by confirmed missions at or above 80% (PRD 4.5, DEC-095). */
   achievementDayCount: number;
-  notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];
+  /** `excludedReviewItems`: `review-N` numbers the learner turned off for later review; the note text is unchanged (DEC-098). */
+  notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string; excludedReviewItems: number[] }[];
   sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null;
     /** Null for legacy free-conversation sessions. */
     mission: { missionId: string; definitionVersion: number; rubricVersion: number; missionMode: string; languageLevel: string; missionEndReason: string | null; finalRouteId: string | null } | null;

@@ -22,7 +22,8 @@ export interface MissionDefinition {
   };
   routes: readonly MissionRoute[];
 }
-export interface GoalCriterion { criterionId: string; label: string; points: number; evidence: string }
+/** `resolution` marks the final resolution/agreement criteria; if any of them is undeterminable the mission credits no achievement day (DEC-097). */
+export interface GoalCriterion { criterionId: string; label: string; points: number; evidence: string; resolution?: true }
 export interface LanguageCriterion { criterionId: string; area: LanguageArea; label: string; points: number }
 export interface MissionRubric {
   missionId: string;
@@ -118,9 +119,9 @@ const CAFE_WRONG_ORDER_RUBRIC_V1: MissionRubric = {
     { criterionId: "temperature_mismatch", label: "온도가 주문과 다름을 전달", points: 5, evidence: "The learner made clear they wanted a hot drink but received an iced one." },
     { criterionId: "caffeine_mismatch", label: "카페인 조건이 주문과 다름을 전달", points: 5, evidence: "The learner made clear they ordered decaf but received regular caffeine." },
     { criterionId: "resolution_request", label: "원하는 처리 요청", points: 10, evidence: "The learner requested an allowed resolution (remake or refund)." },
-    { criterionId: "final_temperature_resolved", label: "최종 처리의 온도 조건 해결", points: 10, evidence: "The final resolution meets the temperature condition or an allowed alternative, confirmed with the learner. A confirmed refund counts." },
-    { criterionId: "final_caffeine_resolved", label: "최종 처리의 카페인 조건 해결", points: 10, evidence: "The final resolution meets the decaf condition or an allowed alternative, confirmed with the learner. A confirmed refund counts." },
-    { criterionId: "final_agreement", label: "최종 처리에 합의", points: 20, evidence: "The learner accepted a concrete allowed resolution and the staff member confirmed it. A proposal alone does not count." },
+    { criterionId: "final_temperature_resolved", label: "최종 처리의 온도 조건 해결", points: 10, evidence: "The final resolution meets the temperature condition or an allowed alternative, confirmed with the learner. A confirmed refund counts.", resolution: true },
+    { criterionId: "final_caffeine_resolved", label: "최종 처리의 카페인 조건 해결", points: 10, evidence: "The final resolution meets the decaf condition or an allowed alternative, confirmed with the learner. A confirmed refund counts.", resolution: true },
+    { criterionId: "final_agreement", label: "최종 처리에 합의", points: 20, evidence: "The learner accepted a concrete allowed resolution and the staff member confirmed it. A proposal alone does not count.", resolution: true },
   ],
   languageCriteria: LANGUAGE_CRITERIA_V1,
 };
@@ -140,6 +141,7 @@ export function validateMission(definition: MissionDefinition, rubric: MissionRu
   const all = [...rubric.goalCriteria, ...rubric.languageCriteria];
   unique(all.map(c => c.criterionId), "criterion id");
   if (all.some(c => !Number.isInteger(c.points) || c.points <= 0)) problems.push("criterion points must be positive integers");
+  if (!rubric.goalCriteria.some(c => c.resolution)) problems.push("no resolution criterion");
   if (rubric.goalCriteria.reduce((sum, c) => sum + c.points, 0) !== GOAL_TOTAL_POINTS) problems.push(`goal points must total ${GOAL_TOTAL_POINTS}`);
   for (const area of LANGUAGE_AREAS) {
     const criteria = rubric.languageCriteria.filter(c => c.area === area);

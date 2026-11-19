@@ -18,6 +18,7 @@
 | 지속 | `login_sessions` | 사용자 FK·고유 토큰 해시·수명·무효화·통합 탈퇴 권한. 사용자 인덱스, 권한 소비/만료 조건 CHECK |
 | 지속 | `learning_sessions` | 사용자 FK·진행 상태·저장 확정 위치·연결 소유·종료/원문 기한·노트 상태. 계정당 active/interrupted 하나의 조건부 고유 인덱스와 상태/순번 CHECK |
 | 지속 | `learning_session_notes` | 학습 세션당 노트·소유자·한국 종료일·보관 기한. 학습 세션/사용자 복합 FK로 소유자 일치, 사용자/만료 인덱스 |
+| 지속 | `learning_note_review_exclusions` | 학습자가 복습에서 뺀 노트 항목(DEC-098). 학습 세션 ID·`review_item_number`(1 이상 CHECK) 복합 키, 끈 시각. 노트 FK·사용자 FK 모두 cascade라 노트 만료·탈퇴 때 함께 삭제된다. 행이 없으면 복습 포함이며 노트 본문은 바꾸지 않는다. 소유자 일치는 서버가 노트 소유자로 확인한다(마이그레이션 `0009_note_review_exclusions.sql`) |
 | 지속 | `scheduled_jobs` | 계정/학습 세션 작업의 대상·종류·실행 시각. 소유자 FK·대상별 조건부 고유성·종류/대상 CHECK |
 | 지속 | `learning_session_missions` | 학습 세션 1:1·소유자 복합 FK cascade. 시작 시 고정한 미션 ID·정의/평가표 버전·모드·수준과 종료 시 1회 기록하는 종료 사유·최종 경로. 모드/수준/버전/종료 사유 CHECK, 최종 경로는 종료 사유가 있을 때만. 시작 시 고정한 기기 IANA 시간대(`mission_time_zone`, 기존 행·미전송 기본 `Asia/Seoul`, DEC-095). 행이 없으면 구형 자유 대화 세션([미션 계약](MISSIONS.md#최소-연결-계약)) |
 | 지속 | `learning_mission_results` | 미션 결과 집계(DEC-088). 학습 세션 1:1·소유자 복합 FK cascade. 평가 상태 `pending·ready·skipped·unavailable`, 영역별(`area_scores` jsonb)/전체 획득·평가 만점 반점 정수, 80% 여부, 평가 시각. `ready`일 때만 점수가 있고 80% 여부는 평가 만점이 0보다 클 때만. 달성 일수로 인정된 현지 날짜(`achievement_date`, 80% 이상일 때만 CHECK, 평가 확정 때 1회 기록, DEC-095)와 사용자별 부분 색인. 사용자 발화 원문 없음. 탈퇴 전까지 보관 |

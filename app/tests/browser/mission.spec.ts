@@ -115,12 +115,15 @@ test("a credited mission shows its stored achievement date and home counts disti
     missionResult: { evaluationStatus: "ready", areaScores: { goal: area(120, 120), grammar: area(20, 20), vocabulary: area(20, 20), organization: area(20, 20), interaction: area(20, 20) },
       totalEarnedHalf: 200, totalMaxHalf: 200, meetsThreshold: true, achievementDate, criteria: null } });
   await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, missionAllowance: { limit: 10, remaining: 3 }, notes: [], achievementDayCount: 2,
-    sessions: [session("credited", "2026-11-18"), session("expired", null, "resume_expired")] } }));
+    sessions: [session("credited", "2026-11-18"), session("expired", null, "resume_expired"), session("unconfirmed", null)] } }));
   // The stored date is shown as-is, not re-derived from the browser's zone.
   await page.goto("/results/credited");
   await expect(page.getByRole("region", { name: "미션 결과" })).toContainText("11월 18일 (수) 달성 일수로 인정됐어요");
   await page.goto("/results/expired");
   await expect(page.getByRole("region", { name: "미션 결과" })).toContainText("재개 기한이 지나 자동으로 끝난 미션이라 달성 일수에는 포함하지 않아요");
+  // DEC-097: met the threshold, but the final resolution could not be confirmed from the record.
+  await page.goto("/results/unconfirmed");
+  await expect(page.getByRole("region", { name: "미션 결과" })).toContainText("최종 처리와 합의를 확인하지 못해 달성 일수에는 포함하지 않아요");
   await page.goto("/home");
   await expect(page.getByLabel("학습 요약")).toContainText("2달성 일수");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

@@ -23,7 +23,10 @@ function evidenceLabel(meta: string) {
   return [turn ? `${turn}번째 발화` : "대화 기록", who].filter(Boolean).join(" · ");
 }
 
-export function NoteView({ markdown, idPrefix }: { markdown: string; idPrefix: string }) {
+/** Learner's on/off choice for each `review-N` item (DEC-098). Without it the note is read-only. */
+export type ReviewChoices = { excluded: readonly number[]; pending?: number | null; onChange: (reviewItem: number, included: boolean) => void };
+
+export function NoteView({ markdown, idPrefix, review }: { markdown: string; idPrefix: string; review?: ReviewChoices }) {
   const blocks = markdown.split(/\n{2,}/).map(b => b.trim()).filter(Boolean);
   const out: ReactNode[] = [];
   blocks.forEach((block, i) => {
@@ -40,6 +43,15 @@ export function NoteView({ markdown, idPrefix }: { markdown: string; idPrefix: s
       if (level === 1) return; // The page shows its own title.
       const Tag = (["h3", "h3", "h4", "h5"] as const)[level - 1];
       out.push(<Tag key={i} className={`note-h${level}`}>{text}</Tag>);
+      const reviewItem = level === 4 && review ? Number(heading[2].match(/^review-(\d+)$/)?.[1] ?? 0) : 0;
+      if (review && reviewItem) {
+        const included = !review.excluded.includes(reviewItem);
+        out.push(<label key={`${i}-review`} className="review-toggle">
+          <input type="checkbox" checked={included} disabled={review.pending === reviewItem}
+            onChange={e => review.onChange(reviewItem, e.target.checked)} />
+          다음 복습에 포함{!included && <span className="pill">제외됨</span>}
+        </label>);
+      }
       return;
     }
     if (block.startsWith("> ")) { out.push(<blockquote key={i}>{inline(block.replace(/^> ?/gm, ""), idPrefix)}</blockquote>); return; }

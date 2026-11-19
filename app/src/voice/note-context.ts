@@ -9,6 +9,8 @@ export type NoteContextItem = {
   explanation?: string;
   observations?: string[];
   lastPracticedDateKst?: string;
+  /** Set only when read back from a note: the `N` of `#### review-N`, used for the learner's review choice (DEC-098). */
+  noteItemNumber?: number;
 };
 const observations = ["추천", "질문", "도움 필요", "재시도 성공", "재시도 실패", "자발적 사용"];
 export function noteLiteral(value: string) {
@@ -73,7 +75,7 @@ export function readNoteContext(markdown: string): NoteContextItem[] {
       if (!evidence.length || obs.some(o => !observations.includes(o))) continue;
       const date = match[4] === "미확인" ? undefined : match[4];
       if (date && (!validNoteDate(date) || kind !== "review" || !obs.some(o => ["재시도 성공", "재시도 실패", "자발적 사용"].includes(o)))) continue;
-      result.push({ kind, summary: readLiteral(match[2]), observations: obs, evidence, ...(date ? { lastPracticedDateKst: date } : {}) });
+      result.push({ kind, summary: readLiteral(match[2]), observations: obs, evidence, ...(date ? { lastPracticedDateKst: date } : {}), noteItemNumber: Number(id) });
     }
   }
   return result;

@@ -47,7 +47,7 @@
 
 구현: [learn 라우트](../../app/src/app/api/learn/route.ts), [학습 서비스](../../app/src/server/learning.ts), [브라우저 조회 타입](../../app/src/learning/types.ts). 과거 `/api/learning` alias는 제공하지 않는다.
 
-`GET /api/learn`은 로그인한 계정의 `{emailAddress, sessions, notes}`를 반환한다. 세션은 시작 시각 내림차순으로 `learningSessionId`·`learningSessionStatus`·`noteGenerationStatus`·`demoScenario`·`learningSessionStartedAt`·`learningSessionEndedAt`(ISO 문자열, 미종료는 `null`), 노트는 종료일 내림차순으로 `learningSessionId`·`learningEndDateKst`·`noteMarkdown`을 포함한다. 화면은 세션 ID로 종료 직후 피드백의 노트를 찾는다. 만료 노트와 다른 계정의 기록은 조회하지 않는다.
+`GET /api/learn`은 로그인한 계정의 `{emailAddress, sessions, notes}`를 반환한다. 세션은 시작 시각 내림차순으로 `learningSessionId`·`learningSessionStatus`·`noteGenerationStatus`·`demoScenario`·`learningSessionStartedAt`·`learningSessionEndedAt`(ISO 문자열, 미종료는 `null`), 노트는 종료일 내림차순으로 `learningSessionId`·`learningEndDateKst`·`noteMarkdown`·`excludedReviewItems`(학습자가 복습에서 뺀 `review-N` 번호, DEC-098)를 포함한다. 화면은 세션 ID로 종료 직후 피드백의 노트를 찾는다. 만료 노트와 다른 계정의 기록은 조회하지 않는다.
 
 `POST /api/learn`은 모두 로그인 쿠키를 요구한다.
 
@@ -58,6 +58,7 @@
 | `end` | `learningSessionId`, `learningConnectionToken` | `{learningSessionEndedAt}` |
 | `heartbeat`, `pause` | `learningSessionId`, `learningConnectionToken` | `{ok: true}` |
 | `note` | `learningSessionId` | `{ok: true}`. 텍스트 연습은 가짜 노트, 음성은 별도 AI 추출·근거 검증으로 정리. 연결 토큰은 요구하지 않음 |
+| `review` | `learningSessionId`, `reviewItem`(노트의 `review-N` 번호, 1 이상 정수), `included`(boolean) | `{ok: true}`. 본인의 보관 중인 노트에 있는 복습 표현 항목만 켜고 끈다(DEC-098). 노트 본문은 바꾸지 않으며 같은 값의 반복 요청은 결과가 같다. 노트에 없는 번호·형식 오류는 `INVALID_REQUEST`, 다른 계정·만료 노트는 `NOT_FOUND`. 연결 토큰은 요구하지 않음 |
 
 음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이나 미션/자유 대화 여부가 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다. 알 수 없거나 유효하지 않은 미션은 `INVALID_MISSION`, `scenario`와 `mission`을 함께 보내거나 형식이 틀리거나 `timeZone`을 런타임이 모르면 `INVALID_REQUEST`다. 새 미션 시작은 잔여 횟수가 없으면 `MISSION_ALLOWANCE_EXHAUSTED`(403)다. 조회 응답 최상위의 `missionAllowance{limit, remaining}`은 새 미션 시작에 쓸 수 있는 횟수다([횟수 예약과 정산](MISSIONS.md#연결과-횟수)). `achievementDayCount`는 달성 일수로 인정된 서로 다른 날짜 수다([일수 인정](MISSIONS.md#일수-인정)). 조회 응답 최상위의 `missions`는 시작 가능한 미션의 공개 정보(`missionId`·제목·상황·역할·화면 목표·`routes[{routeId, label}]`)다. 조회의 세션 항목에는 `mission`(ID·버전·모드·수준·종료 사유·최종 경로 또는 `null`)과 `missionResult`(평가 상태·영역별/전체 반점 정수 원값·80% 여부·인정 날짜 `achievementDate`·만료 전 기준별 상세 `criteria` 또는 `null`)를 포함한다. `criteria` 항목은 `{criterionId, area, label, points, verdict, reason, evidence, counterEvidence}`이고 근거는 인용 문자열만 담는다. 표시 문자열·반올림은 화면이 만든다. 미션 세션의 `note`는 평가와 노트가 모두 확정될 때까지 `NOTE_PENDING`을 반환한다.
 

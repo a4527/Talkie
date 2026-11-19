@@ -50,3 +50,36 @@ test("a note list without expressions says so instead of inventing any", async (
   await page.getByRole("button", { name: /^표현/ }).click();
   await expect(page.getByRole("status")).toContainText("노트에 정리된 표현이 아직 없어요.");
 });
+
+test("a review item can be turned off and on from the note page; the note text stays", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const fixture = note("s1", "2026-11-03", "Could I get a refund?");
+  let excluded: number[] = [];
+  const posts: unknown[] = [];
+  await page.route("**/api/learn", async route => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON(); posts.push(body);
+      excluded = body.included ? excluded.filter(n => n !== body.reviewItem) : [...excluded, body.reviewItem];
+      return route.fulfill({ json: { ok: true } });
+    }
+    return route.fulfill({ json: { emailAddress: "learner@example.test", missions: [], missionAllowance: { limit: 10, remaining: 3 }, achievementDayCount: 0, sessions: [],
+      notes: [{ ...fixture, excludedReviewItems: excluded }] } });
+  });
+  await page.goto("/notes/2026-11-03");
+  const toggle = page.getByRole("checkbox", { name: /다음 복습에 포함/ });
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+  await expect(toggle).not.toBeChecked();
+  await expect(page.locator(".review-toggle")).toContainText("제외됨");
+  expect(posts).toEqual([{ action: "review", learningSessionId: "s1", reviewItem: 1, included: false }]);
+  // The note itself still shows the expression; only the expression list drops it.
+  await expect(page.getByRole("article", { name: "대화 1의 노트" })).toContainText("Could I get a refund?");
+  await page.goto("/notes");
+  await page.getByRole("button", { name: /^표현/ }).click();
+  await expect(page.getByRole("status")).toContainText("노트에 정리된 표현이 아직 없어요.");
+  await page.goto("/notes/2026-11-03");
+  await page.getByRole("checkbox", { name: /다음 복습에 포함/ }).check();
+  expect(posts.at(-1)).toEqual({ action: "review", learningSessionId: "s1", reviewItem: 1, included: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});

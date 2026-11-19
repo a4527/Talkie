@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, uniqueIndex, index, check, foreignKey } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, uniqueIndex, index, check, foreignKey, primaryKey } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 export const users = pgTable("users", {
@@ -49,6 +49,17 @@ export const learningSessionNotes = pgTable("learning_session_notes", {
 }, t => [
   foreignKey({ name: "learning_note_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
   index("learning_note_user_expiry").on(t.userId, t.noteRetentionExpiresAt),
+]);
+/** Review items of a note the learner turned off (DEC-098). The note text is unchanged; rows go with the note. */
+export const learningNoteReviewExclusions = pgTable("learning_note_review_exclusions", {
+  learningSessionId: uuid("learning_session_id").notNull(), userId: uuid("user_id").notNull(),
+  reviewItemNumber: integer("review_item_number").notNull(), excludedAt: time("excluded_at").notNull(),
+}, t => [
+  primaryKey({ name: "learning_note_review_exclusion_pk", columns: [t.learningSessionId, t.reviewItemNumber] }),
+  foreignKey({ name: "learning_note_review_exclusion_note", columns: [t.learningSessionId], foreignColumns: [learningSessionNotes.learningSessionId] }).onDelete("cascade"),
+  foreignKey({ name: "learning_note_review_exclusion_user", columns: [t.userId], foreignColumns: [users.userId] }).onDelete("cascade"),
+  index("learning_note_review_exclusion_user_index").on(t.userId),
+  check("learning_note_review_item_positive", sql`${t.reviewItemNumber} > 0`),
 ]);
 export const scheduledJobs = pgTable("scheduled_jobs", {
   scheduledJobId: uuid("scheduled_job_id").primaryKey().defaultRandom(), targetUserId: uuid("target_user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),

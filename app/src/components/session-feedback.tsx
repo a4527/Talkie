@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { requestLearningAction } from "../client/learning";
 import { downloadMarkdown, formatKoreanDate, useRecords } from "../client/app";
-import { NoteView } from "./note-view";
+import { ReviewableNote } from "./reviewable-note";
 import { MissionResult } from "./mission-result";
 
 const SETTLED = ["ready", "empty", "expired"];
@@ -39,7 +39,7 @@ export function SessionFeedback({ learningSessionId, onAgain }: { learningSessio
       {note ? <>
         <div className="note-actions"><span className="note-date">{formatKoreanDate(note.learningEndDateKst)} · 한국 시간 종료일</span>
           <button className="primary" onClick={() => downloadMarkdown(`${note.learningEndDateKst}.md`, note.noteMarkdown)}>Markdown 다운로드 <span aria-hidden="true">↓</span></button></div>
-        <NoteView markdown={note.noteMarkdown} idPrefix="feedback" />
+        <ReviewableNote note={note} idPrefix="feedback" onChanged={reload} />
       </> : session?.noteGenerationStatus === "empty" ? <p>저장된 발화가 없어 노트를 만들지 않았어요. 다음 대화에서 한 문장이라도 말해 보세요.</p>
         : session?.noteGenerationStatus === "expired" ? <p>노트를 만들 수 있는 기한이 지났어요.</p>
         : <div className="note-waiting" role="status"><span className="pulse" aria-hidden="true" /><p>대화를 돌아보며 노트를 정리하고 있어요…</p>

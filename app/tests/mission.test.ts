@@ -8,7 +8,7 @@ import { startLearning } from "../src/server/learning";
 import { resumeMissionProgress, validateMissionProgress } from "../src/mission/progress";
 import type { Turn } from "../src/learning/types";
 import { POST as learnPost } from "../src/app/api/learn/route";
-import { achievementDateFor, localDateIn, parseTimeZone } from "../src/mission/achievement";
+import { achievementDateFor, localDateIn, parseTimeZone, resolutionUnconfirmed } from "../src/mission/achievement";
 
 describe("mission registry", () => {
   it("has a valid cafe mission with the approved points", () => {
@@ -61,13 +61,27 @@ describe("achievement day", () => {
     expect(localDateIn(new Date("2026-11-19T06:30:00Z"), "America/Los_Angeles")).toBe("2026-11-18");
   });
   it("credits only a confirmed 80% result that did not end by resume expiry", () => {
-    const base = { learningSessionEndedAt: new Date("2026-11-19T06:30:00Z"), missionTimeZone: "Asia/Seoul" };
+    const base = { learningSessionEndedAt: new Date("2026-11-19T06:30:00Z"), missionTimeZone: "Asia/Seoul", resolutionUnconfirmed: false };
     expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "goal_completed" })).toBe("2026-11-19");
     expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "no_progress_failed" })).toBe("2026-11-19");
     expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "resume_expired" })).toBeNull();
     expect(achievementDateFor({ ...base, meetsThreshold: false, missionEndReason: "goal_completed" })).toBeNull();
     expect(achievementDateFor({ ...base, meetsThreshold: null, missionEndReason: "goal_completed" })).toBeNull();
     expect(achievementDateFor({ ...base, missionTimeZone: "Bogus/Zone", meetsThreshold: true, missionEndReason: "user_ended" })).toBe("2026-11-19");
+    expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "goal_completed", resolutionUnconfirmed: true })).toBeNull();
+  });
+  it("treats any undeterminable or missing resolution criterion as unconfirmed, but not an unmet one (DEC-097)", () => {
+    const goal = findMissionRubric("cafe-wrong-order", 1)!.goalCriteria;
+    expect(goal.filter(c => c.resolution).map(c => c.criterionId)).toEqual(["final_temperature_resolved", "final_caffeine_resolved", "final_agreement"]);
+    const all = (verdict: string, overrides: Record<string, string> = {}) => goal.map(c => ({ criterionId: c.criterionId, verdict: overrides[c.criterionId] ?? verdict }));
+    expect(resolutionUnconfirmed(all("met"), goal)).toBe(false);
+    // A real failure is unmet, not undeterminable: it still credits a day if the score reaches 80%.
+    expect(resolutionUnconfirmed(all("met", { final_agreement: "unmet" }), goal)).toBe(false);
+    expect(resolutionUnconfirmed(all("met", { final_agreement: "undeterminable" }), goal)).toBe(true);
+    expect(resolutionUnconfirmed(all("met", { final_caffeine_resolved: "undeterminable" }), goal)).toBe(true);
+    // Only resolution criteria matter; an undeterminable problem report does not block the day.
+    expect(resolutionUnconfirmed(all("met", { caffeine_mismatch: "undeterminable" }), goal)).toBe(false);
+    expect(resolutionUnconfirmed(all("met").filter(j => j.criterionId !== "final_agreement"), goal)).toBe(true);
   });
 });
 

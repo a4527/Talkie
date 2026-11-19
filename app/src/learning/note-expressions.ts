@@ -24,10 +24,13 @@ function quotedBlocks(section: string) {
 }
 
 /** Expressions shown in one note, in note order, without duplicates of the same kind and text. */
-export function extractNoteExpressions(markdown: string): NoteExpression[] {
+export function extractNoteExpressions(markdown: string, excludedReviewItems: readonly number[] = []): NoteExpression[] {
   const found: NoteExpression[] = [];
   if (markdown.includes(`\n\n${NOTE_FORMAT}\n`)) {
-    for (const item of readNoteContext(markdown)) if (item.kind === "review") found.push({ text: item.summary, kind: "review" });
+    for (const item of readNoteContext(markdown)) {
+      // A review item the learner turned off is not offered for browsing either (DEC-098).
+      if (item.kind === "review" && !excludedReviewItems.includes(item.noteItemNumber ?? 0)) found.push({ text: item.summary, kind: "review" });
+    }
     const details = markdown.split("\n## 학습 상세\n")[1] ?? "";
     for (const match of details.matchAll(/(?:^|\n)### 세부 (\d+): ([^\n]+)\n\n<a id="extra-(\d+)"><\/a>\n\n([^\n]+)/g)) {
       const kind = DETAIL_KIND_BY_LABEL[match[2]];
@@ -58,14 +61,14 @@ export type ExpressionEntry = {
   /** Distinct Korea end dates, newest first; each links to that day's notes. */
   dates: string[];
 };
-type IndexedNote = { learningEndDateKst: string; noteMarkdown: string };
+type IndexedNote = { learningEndDateKst: string; noteMarkdown: string; excludedReviewItems?: readonly number[] };
 
 /** One row per expression across notes; newest appearance first. */
 export function buildExpressionIndex(notes: readonly IndexedNote[]): ExpressionEntry[] {
   const index = new Map<string, ExpressionEntry>();
   const ordered = [...notes].sort((a, b) => b.learningEndDateKst.localeCompare(a.learningEndDateKst));
   for (const note of ordered) {
-    for (const expression of extractNoteExpressions(note.noteMarkdown)) {
+    for (const expression of extractNoteExpressions(note.noteMarkdown, note.excludedReviewItems)) {
       const key = normalizeExpression(expression.text);
       const entry = index.get(key) ?? { text: expression.text, kinds: [], dates: [] };
       if (!entry.kinds.includes(expression.kind)) entry.kinds.push(expression.kind);

@@ -20,9 +20,16 @@ export function localDateIn(instant: Date, timeZone: string) {
 
 /**
  * The credited date, or null. Only a confirmed evaluation at or above 80% counts; a real-mode failure
- * still counts, while a mission auto-closed by resume expiry never does.
+ * still counts, while a mission auto-closed by resume expiry never does. An undeterminable final
+ * resolution/agreement criterion also blocks the day: the resolution was not confirmed (DEC-097).
  */
-export function achievementDateFor(input: { meetsThreshold: boolean | null; missionEndReason: string | null; learningSessionEndedAt: Date; missionTimeZone: string }) {
-  if (input.meetsThreshold !== true || input.missionEndReason === "resume_expired") return null;
+export function achievementDateFor(input: { meetsThreshold: boolean | null; missionEndReason: string | null; learningSessionEndedAt: Date; missionTimeZone: string; resolutionUnconfirmed: boolean }) {
+  if (input.meetsThreshold !== true || input.missionEndReason === "resume_expired" || input.resolutionUnconfirmed) return null;
   return localDateIn(input.learningSessionEndedAt, parseTimeZone(input.missionTimeZone) ?? DEFAULT_MISSION_TIME_ZONE);
+}
+
+/** True when any criterion marked `resolution` was judged undeterminable (or is missing). */
+export function resolutionUnconfirmed(judgements: readonly { criterionId: string; verdict: string }[], goalCriteria: readonly { criterionId: string; resolution?: true }[]) {
+  const verdicts = new Map(judgements.map(j => [j.criterionId, j.verdict]));
+  return goalCriteria.some(c => c.resolution && (verdicts.get(c.criterionId) ?? "undeterminable") === "undeterminable");
 }

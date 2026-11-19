@@ -83,5 +83,7 @@ function AchievementDay({ session }: { session: Session }) {
   const result = session.missionResult;
   if (result?.achievementDate) return <p className="notice-line">{formatKoreanDate(result.achievementDate)} 달성 일수로 인정됐어요. 같은 날 여러 미션을 달성해도 하루로 세요.</p>;
   if (result?.meetsThreshold && session.mission?.missionEndReason === "resume_expired") return <p className="hint">재개 기한이 지나 자동으로 끝난 미션이라 달성 일수에는 포함하지 않아요.</p>;
+  // With the threshold met and no resume expiry, the only remaining reason is an unconfirmed final resolution (DEC-097).
+  if (result?.meetsThreshold && result.evaluationStatus === "ready") return <p className="hint">대화 기록에서 최종 처리와 합의를 확인하지 못해 달성 일수에는 포함하지 않아요. 점수는 확인된 항목만으로 계산했어요.</p>;
   return null;
 }

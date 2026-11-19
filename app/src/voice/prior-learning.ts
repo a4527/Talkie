@@ -47,7 +47,8 @@ function selectLegacyContext(notes: readonly { learningEndDateKst: string; noteM
 }
 
 
-type SavedNote = { learningEndDateKst: string; noteMarkdown: string };
+/** `excludedReviewItems` are review items the learner turned off (DEC-098); they stay in the note but are never sent. */
+type SavedNote = { learningEndDateKst: string; noteMarkdown: string; excludedReviewItems?: readonly number[] };
 /** The server applies access/lifetime/window filters before calling this function. */
 export function selectPriorLearningContext(notes: readonly SavedNote[], difficultyNotes: readonly SavedNote[] = notes): PriorLearningContext {
   const result = selectLegacyContext(notes.filter(n => !n.noteMarkdown.includes("노트 형식:")));
@@ -62,6 +63,7 @@ export function selectPriorLearningContext(notes: readonly SavedNote[], difficul
         if (!previous || previous.observedDateKst < note.learningEndDateKst) topics.set(item.summary, { summary: item.summary, observedDateKst: note.learningEndDateKst });
       }
       if (item.kind !== "review" || new TextEncoder().encode(item.summary).length > 1200) continue;
+      if (item.noteItemNumber !== undefined && note.excludedReviewItems?.includes(item.noteItemNumber)) continue;
       const old = reviews.get(item.summary);
       const date = [old?.lastPracticedDateKst, item.lastPracticedDateKst].filter((d): d is string => Boolean(d)).sort().at(-1);
       reviews.set(item.summary, { expression: item.summary, ...(date ? { lastPracticedDateKst: date } : {}),

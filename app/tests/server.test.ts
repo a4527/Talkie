@@ -8,10 +8,11 @@ import { loginSessions, emailAuthRequests, emailAuthRateLimits, scheduledJobs, l
 import { transcriptSessionStates, transcriptSaves } from "../src/server/db/transcripts-schema";
 import { deleteTranscriptSource } from "../src/server/db/transcripts-lifecycle";
 import { consumeLink, deleteAccount, dbNow, digest, inspectLink, logout, requestLink, withIdentity, type Mail } from "../src/server/auth";
-import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
+import { endLearning, completeLearningNote, updateLearningHeartbeat, listLearningRecords, saveLearning, startLearning, getVoiceLearningContext, setNoteReviewChoice, validateConversationSnapshot, encodeStoredConversationSnapshot } from "../src/server/learning";
 import { invalidateRestoredAuthentication, maintenance } from "../src/server/maintenance";
 import { completeGoogleAuth, unlinkGoogle, type GoogleOAuthState } from "../src/server/google-auth";
-import { googleIdentities, learningSessionMissions, learningMissionResults, learningMissionResultDetails, missionUsageHolds } from "../src/server/db/records-schema";
+import { googleIdentities, learningSessionMissions, learningMissionResults, learningMissionResultDetails, learningNoteReviewExclusions, missionUsageHolds } from "../src/server/db/records-schema";
+import { readNoteContext } from "../src/voice/note-context";
 import { currentMission } from "../src/mission/definitions";
 import { localDateIn } from "../src/mission/achievement";
 import type { ExtractionGenerate } from "../src/voice/note-extraction";
@@ -626,6 +627,15 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.deepEqual([unmet.evaluationStatus, unmet.meetsThreshold, unmet.achievementDate], ["ready", false, null]);
       const other = await startLearning(raw, "voice", mission, "Asia/Seoul");
       assert.equal((await finish(raw, other, "2026-11-17T01:00:00Z", true)).achievementDate, "2026-11-17");
+      // DEC-097: above 80% only because the agreement was undeterminable — the score stays, the day does not.
+      const unconfirmed = await startLearning(raw, "voice", mission, "Asia/Seoul");
+      await saveLearning(raw, unconfirmed.learningSessionId, unconfirmed.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns });
+      await endLearning(raw, unconfirmed.learningSessionId, unconfirmed.learningConnectionToken);
+      await databases().records.update(learningSessions).set({ learningSessionEndedAt: new Date("2026-11-16T01:00:00Z") }).where(eq(learningSessions.learningSessionId, unconfirmed.learningSessionId));
+      await completeLearningNote(raw, unconfirmed.learningSessionId, { generate: note, evaluate: async () => JSON.stringify({ judgements: criteria.map(c => ({ criterionId: c.criterionId, counterEvidence: [], reason: "합성 판정",
+        ...(c.criterionId === "final_agreement" ? { verdict: "undeterminable", evidence: [] } : { verdict: "met", evidence: [{ turnId: "u2", text: "please remake it" }] }) })) }) });
+      const blocked = await result(unconfirmed.learningSessionId);
+      assert.deepEqual([blocked.evaluationStatus, blocked.meetsThreshold, blocked.totalMaxHalf, blocked.achievementDate], ["ready", true, 160, null]);
       // A resume-expired mission is scored but never credits a day.
       const idle = await startLearning(raw, "voice", mission, "Asia/Seoul");
       await saveLearning(raw, idle.learningSessionId, idle.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns });
@@ -636,13 +646,62 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.deepEqual([expired.evaluationStatus, expired.meetsThreshold, expired.achievementDate], ["ready", true, null]);
       const records = await listLearningRecords(raw);
       assert.equal(records.achievementDayCount, 2, "Two credited missions on 11-18 count once");
-      assert.deepEqual(records.sessions.map(s => s.missionResult?.achievementDate), [null, "2026-11-17", null, "2026-11-18", "2026-11-18"]);
+      assert.deepEqual(records.sessions.map(s => s.missionResult?.achievementDate), [null, null, "2026-11-17", null, "2026-11-18", "2026-11-18"]);
       await assert.rejects(databases().records.update(learningMissionResults).set({ achievementDate: "2026-11-17" }).where(eq(learningMissionResults.learningSessionId, below.learningSessionId)),
         postgresFailure("23514", "learning_mission_result_achievement"), "Only a result at or above 80% can carry a date");
     } finally {
       for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;
       }
+    }
+  });
+  it("lets the learner turn a note's review item off and on without changing the note (DEC-098)", async () => {
+    const saved = Object.fromEntries(["TALKIE_VOICE_TEST", "GEMINI_FREE_TIER_CONFIRMED", "GOOGLE_API_KEY"].map(k => [k, process.env[k]]));
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    const { rubric } = currentMission("cafe-wrong-order")!;
+    const fix = "My latte is not what I ordered.";
+    const turns = [{ turnId: "a0", requestId: "a0", role: "assistant", text: "Hi, how can I help?" }, { turnId: "u1", requestId: "u1", role: "user", text: "My latte wrong." },
+      { turnId: "a1", requestId: "u1", role: "assistant", text: `Quick tip: "${fix}" Can you say it again?` }, { turnId: "u2", requestId: "u2", role: "user", text: fix }];
+    const corrections = [{ correctionId: "c1", sourceTurnId: "u1", deliveredTurnId: "a1", replacement: fix, explanation: "Say what is wrong with the order.", attempts: [{ turnId: "u2", outcome: "success" }] }];
+    const note: ExtractionGenerate = async () => JSON.stringify({ contextItems: [], detailItems: [{ kind: "summary", text: "Cafe complaint", evidence: [{ turnId: "u1", role: "user", text: "My latte wrong." }] }] });
+    const evaluate: ExtractionGenerate = async () => JSON.stringify({ judgements: [...rubric.goalCriteria, ...rubric.languageCriteria].map(c => ({ criterionId: c.criterionId, verdict: "met", evidence: [{ turnId: "u2", text: fix }], counterEvidence: [], reason: "합성 판정" })) });
+    try {
+      const raw = await login("review-choice@example.test"), other = await login("review-other@example.test");
+      const s = await startLearning(raw, "voice", { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "B1" });
+      await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, { learningState: "conversation", corrections, turns });
+      await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+      await completeLearningNote(raw, s.learningSessionId, { generate: note, evaluate });
+      const before = (await listLearningRecords(raw)).notes.find(n => n.learningSessionId === s.learningSessionId)!;
+      assert.deepEqual(before.excludedReviewItems, []);
+      const item = readNoteContext(before.noteMarkdown).find(i => i.kind === "review" && i.summary === fix)?.noteItemNumber;
+      assert.ok(item, "The delivered correction is a review item of the mission note");
+      const prior = async () => {
+        const next = await startLearning(raw, "voice");
+        const context = await getVoiceLearningContext(raw, next.learningSessionId, next.learningConnectionToken);
+        await endLearning(raw, next.learningSessionId, next.learningConnectionToken);
+        return context.priorLearningContext.reviewExpressions.map(e => e.expression);
+      };
+      assert.ok((await prior()).includes(fix));
+      await setNoteReviewChoice(raw, s.learningSessionId, item, false);
+      await setNoteReviewChoice(raw, s.learningSessionId, item, false); // idempotent
+      const off = (await listLearningRecords(raw)).notes.find(n => n.learningSessionId === s.learningSessionId)!;
+      assert.deepEqual(off.excludedReviewItems, [item]);
+      assert.equal(off.noteMarkdown, before.noteMarkdown, "The note text never changes");
+      assert.ok(!(await prior()).includes(fix), "A turned-off item is not offered for review");
+      for (const bad of [0, 99, 1.5, "1"]) await assert.rejects(setNoteReviewChoice(raw, s.learningSessionId, bad, true), /INVALID_REQUEST/);
+      await assert.rejects(setNoteReviewChoice(raw, s.learningSessionId, item, "no"), /INVALID_REQUEST/);
+      await assert.rejects(setNoteReviewChoice(other, s.learningSessionId, item, true), /NOT_FOUND/);
+      await setNoteReviewChoice(raw, s.learningSessionId, item, true);
+      assert.deepEqual((await listLearningRecords(raw)).notes.find(n => n.learningSessionId === s.learningSessionId)!.excludedReviewItems, []);
+      assert.ok((await prior()).includes(fix));
+      // The choice lives and dies with the note.
+      await setNoteReviewChoice(raw, s.learningSessionId, item, false);
+      await databases().records.update(learningSessionNotes).set({ noteRetentionExpiresAt: new Date(Date.now() - 1000) }).where(eq(learningSessionNotes.learningSessionId, s.learningSessionId));
+      await assert.rejects(setNoteReviewChoice(raw, s.learningSessionId, item, true), /NOT_FOUND/, "An expired note cannot be changed");
+      await maintenance();
+      assert.equal((await databases().records.select().from(learningNoteReviewExclusions).where(eq(learningNoteReviewExclusions.learningSessionId, s.learningSessionId))).length, 0);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     }
   });
   it("holds one mission count at start, confirms it only when the learner spoke and blocks new starts at zero", async () => {

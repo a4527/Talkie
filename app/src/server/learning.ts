@@ -9,10 +9,11 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "d
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
-import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "./db/records-schema";
+import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions, learningMissionResults, learningMissionResultDetails, learningNoteReviewExclusions } from "./db/records-schema";
+import { readNoteContext } from "../voice/note-context";
 import { evaluateMission, type AreaScores, type EvaluationRun } from "../mission/evaluation";
 import { currentMission, describeJudgements, listMissionCatalog, findMissionDefinition, findMissionRubric, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
-import { achievementDateFor, DEFAULT_MISSION_TIME_ZONE } from "../mission/achievement";
+import { achievementDateFor, DEFAULT_MISSION_TIME_ZONE, resolutionUnconfirmed } from "../mission/achievement";
 import { holdMissionUsage, missionAllowance, settleMissionUsage } from "./mission-usage";
 import { DEFAULT_NO_PROGRESS_THRESHOLD, findCompletedRoute } from "../mission/realtime";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
@@ -331,9 +332,11 @@ export async function storeMissionEvaluation(tx: RecordsTransaction, row: Learni
   const now = await dbNow(tx);
   if (row.transcriptDeleteDeadlineAt <= now) return;
   // The achievement date is fixed here, from the end time and the zone fixed at start, and never recomputed (DEC-095).
-  const [mission] = await tx.select({ missionEndReason: learningSessionMissions.missionEndReason, missionTimeZone: learningSessionMissions.missionTimeZone })
+  const [mission] = await tx.select({ missionId: learningSessionMissions.missionId, rubricVersion: learningSessionMissions.rubricVersion, missionEndReason: learningSessionMissions.missionEndReason, missionTimeZone: learningSessionMissions.missionTimeZone })
     .from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, row.learningSessionId));
-  const achievementDate = mission ? achievementDateFor({ meetsThreshold: run.score.meetsThreshold, missionEndReason: mission.missionEndReason, learningSessionEndedAt: row.learningSessionEndedAt, missionTimeZone: mission.missionTimeZone }) : null;
+  const rubric = mission && findMissionRubric(mission.missionId, mission.rubricVersion);
+  const achievementDate = mission && rubric ? achievementDateFor({ meetsThreshold: run.score.meetsThreshold, missionEndReason: mission.missionEndReason, learningSessionEndedAt: row.learningSessionEndedAt,
+    missionTimeZone: mission.missionTimeZone, resolutionUnconfirmed: resolutionUnconfirmed(run.judgements, rubric.goalCriteria) }) : null;
   await tx.update(learningMissionResults).set({ evaluationStatus: "ready", areaScores: run.score.areas, totalEarnedHalf: run.score.totalEarnedHalf, totalMaxHalf: run.score.totalMaxHalf,
     meetsThreshold: run.score.meetsThreshold, evaluatedAt: now, achievementDate }).where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
   await tx.insert(learningMissionResultDetails).values({ learningSessionId: row.learningSessionId, userId: row.userId, judgements: run.judgements,
@@ -385,8 +388,10 @@ export async function finalizeLearningNote(tx: RecordsTransaction, row: Learning
   if (row.demoScenario === "voice" && !extraction) return;
   const conversationSnapshot = await readConfirmed(row);
   const endedAt = row.learningSessionEndedAt.toISOString();
+  const [missionRow] = await tx.select({ learningSessionId: learningSessionMissions.learningSessionId }).from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, row.learningSessionId));
   const noteMarkdown = row.demoScenario === "voice"
-    ? buildVoiceNoteMarkdown(conversationSnapshot, endedAt, extraction!.contextItems, { details: extraction!.detailItems, incomplete: extraction!.failedChunks > 0 || extraction!.omittedChunks > 0 || extraction!.droppedItems > 0 })
+    ? buildVoiceNoteMarkdown(conversationSnapshot, endedAt, extraction!.contextItems, { details: extraction!.detailItems, incomplete: extraction!.failedChunks > 0 || extraction!.omittedChunks > 0 || extraction!.droppedItems > 0 },
+      { mission: !!missionRow })
     : buildDemoNoteMarkdown(conversationSnapshot, row.learningSessionEndedAt);
   if (noteMarkdown) await tx.insert(learningSessionNotes).values({ learningSessionId: row.learningSessionId, userId: row.userId, learningEndDateKst: formatKstDate(endedAt), noteMarkdown,
     noteRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + NOTE_RETENTION_DAYS * DAY) }).onConflictDoNothing();
@@ -450,7 +455,36 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
     // Several credited missions on one local date count once (PRD 4.5).
     const [days] = await tx.select({ count: sql<number>`count(distinct ${learningMissionResults.achievementDate})::int` }).from(learningMissionResults)
       .where(and(eq(learningMissionResults.userId, who.userId), isNotNull(learningMissionResults.achievementDate)));
-    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), missionAllowance: await missionAllowance(tx, who.userId), achievementDayCount: days?.count ?? 0, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
+    const excluded = await reviewExclusions(tx, who.userId);
+    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), missionAllowance: await missionAllowance(tx, who.userId), achievementDayCount: days?.count ?? 0, sessions,
+      notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown, excludedReviewItems: excluded.get(n.learningSessionId) ?? [] })) };
+  });
+}
+
+/** Review items each of the user's notes has turned off, by learning session (DEC-098). */
+async function reviewExclusions(tx: RecordsTransaction, userId: string) {
+  const rows = await tx.select({ learningSessionId: learningNoteReviewExclusions.learningSessionId, reviewItemNumber: learningNoteReviewExclusions.reviewItemNumber })
+    .from(learningNoteReviewExclusions).where(eq(learningNoteReviewExclusions.userId, userId)).orderBy(asc(learningNoteReviewExclusions.reviewItemNumber));
+  const bySession = new Map<string, number[]>();
+  for (const r of rows) bySession.set(r.learningSessionId, [...(bySession.get(r.learningSessionId) ?? []), r.reviewItemNumber]);
+  return bySession;
+}
+/**
+ * Turns one review item of the learner's own retained note on or off for later review (DEC-098).
+ * The note text itself never changes; only items the note actually shows as `review-N` can be chosen.
+ */
+export async function setNoteReviewChoice(loginSessionToken: string | undefined, learningSessionId: string, reviewItemNumber: unknown, included: unknown) {
+  if (!Number.isInteger(reviewItemNumber) || (reviewItemNumber as number) < 1 || typeof included !== "boolean" || !/^[0-9a-f-]{36}$/.test(learningSessionId)) throw new AppError("INVALID_REQUEST");
+  const item = reviewItemNumber as number;
+  return withIdentity(loginSessionToken, async (tx, who) => {
+    const now = await dbNow(tx);
+    const [note] = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.learningSessionId, learningSessionId), eq(learningSessionNotes.userId, who.userId),
+      sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`)).for("update");
+    if (!note) throw new AppError("NOT_FOUND", 404);
+    if (!readNoteContext(note.noteMarkdown).some(i => i.kind === "review" && i.noteItemNumber === item)) throw new AppError("INVALID_REQUEST");
+    if (included) await tx.delete(learningNoteReviewExclusions).where(and(eq(learningNoteReviewExclusions.learningSessionId, learningSessionId), eq(learningNoteReviewExclusions.reviewItemNumber, item)));
+    else await tx.insert(learningNoteReviewExclusions).values({ learningSessionId, userId: who.userId, reviewItemNumber: item, excludedAt: now }).onConflictDoNothing();
+    return { ok: true as const };
   });
 }
 
@@ -460,7 +494,7 @@ export async function getVoiceLearningContext(loginSessionToken: string | undefi
     requireLearningConnection(row, learningConnectionToken, now);
     if (row.demoScenario !== "voice") throw new AppError("LEARNING_MODE_CONFLICT", 409);
     const window = priorLearningWindow(now);
-    const notes = await tx.select({ learningEndDateKst: learningSessionNotes.learningEndDateKst, noteMarkdown: learningSessionNotes.noteMarkdown })
+    const notes = await tx.select({ learningSessionId: learningSessionNotes.learningSessionId, learningEndDateKst: learningSessionNotes.learningEndDateKst, noteMarkdown: learningSessionNotes.noteMarkdown })
       .from(learningSessionNotes).innerJoin(learningSessions, eq(learningSessionNotes.learningSessionId, learningSessions.learningSessionId))
       .where(and(eq(learningSessionNotes.userId, who.userId), eq(learningSessions.userId, who.userId),
         eq(learningSessions.demoScenario, "voice"), eq(learningSessions.learningSessionStatus, "ended"), eq(learningSessions.noteGenerationStatus, "ready"),
@@ -478,6 +512,8 @@ export async function getVoiceLearningContext(loginSessionToken: string | undefi
     const definition = missionRow ? findMissionDefinition(missionRow.missionId, missionRow.definitionVersion) : undefined;
     if (missionRow && !definition) throw new AppError("MISSION_UNAVAILABLE", 409);
     const mission = missionRow && definition ? { definition, missionMode: missionRow.missionMode as MissionMode, languageLevel: missionRow.languageLevel as LanguageLevel } : undefined;
-    return { userId: who.userId, priorLearningContext: selectPriorLearningContext(notes, difficultyNotes), ...(mission ? { mission } : {}) };
+    const excluded = await reviewExclusions(tx, who.userId);
+    const withChoices = notes.map(n => ({ ...n, excludedReviewItems: excluded.get(n.learningSessionId) ?? [] }));
+    return { userId: who.userId, priorLearningContext: selectPriorLearningContext(withChoices, difficultyNotes), ...(mission ? { mission } : {}) };
   });
 }
