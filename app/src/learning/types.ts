@@ -103,6 +103,8 @@ export interface LearningRecordsResponse {
   emailAddress: string;
   /** Startable missions for the selection screen (no partner knowledge or rubric evidence). */
   missions: MissionCatalogEntry[];
+  /** Distinct local dates credited by confirmed missions at or above 80% (PRD 4.5, DEC-095). */
+  achievementDayCount: number;
   notes: { learningSessionId: string; learningEndDateKst: string; noteMarkdown: string }[];
   sessions: { learningSessionId: string; learningSessionStatus: string; noteGenerationStatus: string; demoScenario: string; learningSessionStartedAt: string; learningSessionEndedAt: string | null;
     /** Null for legacy free-conversation sessions. */
@@ -110,6 +112,8 @@ export interface LearningRecordsResponse {
     /** Null until a mission session ends. Scores are half-point integers; `meetsThreshold` is null when nothing was evaluable. */
     missionResult: { evaluationStatus: string; areaScores: Record<"goal" | "grammar" | "vocabulary" | "organization" | "interaction", { earnedHalf: number; maxHalf: number }> | null;
       totalEarnedHalf: number | null; totalMaxHalf: number | null; meetsThreshold: boolean | null;
+      /** Local YYYY-MM-DD this mission credited as an achievement day; null when it did not count. */
+      achievementDate: string | null;
       /** Per-criterion verdicts while the detail row is kept (expires with the note); null otherwise. */
       criteria: MissionCriterionResult[] | null } | null }[];
 }

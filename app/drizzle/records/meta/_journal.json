@@ -50,6 +50,13 @@
       "when": 1794726281044,
       "tag": "0006_mission_results",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795052645175,
+      "tag": "0007_mission_achievement_days",
+      "breakpoints": true
     }
   ]
 }

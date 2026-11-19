@@ -1,0 +1,4 @@
+ALTER TABLE "learning_mission_results" ADD COLUMN "achievement_date" text;--> statement-breakpoint
+ALTER TABLE "learning_session_missions" ADD COLUMN "mission_time_zone" text DEFAULT 'Asia/Seoul' NOT NULL;--> statement-breakpoint
+CREATE INDEX "learning_mission_result_user_achievement" ON "learning_mission_results" USING btree ("user_id","achievement_date") WHERE "learning_mission_results"."achievement_date" is not null;--> statement-breakpoint
+ALTER TABLE "learning_mission_results" ADD CONSTRAINT "learning_mission_result_achievement" CHECK ("learning_mission_results"."achievement_date" is null or ("learning_mission_results"."meets_threshold" is true and "learning_mission_results"."achievement_date" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));

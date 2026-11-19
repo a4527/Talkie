@@ -53,13 +53,13 @@
 
 | action | 요청 필드 (action 외) | 정상 응답 |
 | --- | --- | --- |
-| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) 또는 `mission: {missionId, missionMode: practice·real, languageLevel: A1·A2·B1·B2·C}` 중 하나 | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot, mission}`. `mission`은 공개 정보(상황·역할·화면 목표·버전·모드·수준·경로 ID `routeIds`) 또는 `null`. 미션 시작은 비공개 음성 경로를 사용하고, 진행 대화가 있으면 요청값 대신 저장값으로 재개한다 |
+| `start` | `scenario` (`correction`, `conversation` 또는 비공개 저장 학습의 `voice`) 또는 `mission: {missionId, missionMode: practice·real, languageLevel: A1·A2·B1·B2·C}` 중 하나. 미션 시작은 선택 필드 `timeZone`(기기 IANA 시간대, 없으면 `Asia/Seoul`)을 함께 보낸다 | `{learningSessionId, learningConnectionToken, confirmedSaveSequenceNumber, demoScenario, conversationSnapshot, mission}`. `mission`은 공개 정보(상황·역할·화면 목표·버전·모드·수준·경로 ID `routeIds`) 또는 `null`. 미션 시작은 비공개 음성 경로를 사용하고, 진행 대화가 있으면 요청값 대신 저장값으로 재개한다 |
 | `save` | `learningSessionId`, `learningConnectionToken`, `saveSequenceNumber`, `conversationSnapshot`(미션 세션은 선택 `missionProgress` 포함 가능, [진행 상태](MISSIONS.md#최소-연결-계약)) | `{confirmedSaveSequenceNumber}`. 자유 대화의 `missionProgress`·고정 정의에 없는 경로는 `INVALID_RECORD`, 확정된 경로 사건 변경은 `SAVE_SEQUENCE_CONFLICT` |
 | `end` | `learningSessionId`, `learningConnectionToken` | `{learningSessionEndedAt}` |
 | `heartbeat`, `pause` | `learningSessionId`, `learningConnectionToken` | `{ok: true}` |
 | `note` | `learningSessionId` | `{ok: true}`. 텍스트 연습은 가짜 노트, 음성은 별도 AI 추출·근거 검증으로 정리. 연결 토큰은 요구하지 않음 |
 
-음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이나 미션/자유 대화 여부가 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다. 알 수 없거나 유효하지 않은 미션은 `INVALID_MISSION`, `scenario`와 `mission`을 함께 보내거나 형식이 틀리면 `INVALID_REQUEST`다. 조회 응답 최상위의 `missions`는 시작 가능한 미션의 공개 정보(`missionId`·제목·상황·역할·화면 목표·`routes[{routeId, label}]`)다. 조회의 세션 항목에는 `mission`(ID·버전·모드·수준·종료 사유·최종 경로 또는 `null`)과 `missionResult`(평가 상태·영역별/전체 반점 정수 원값·80% 여부·만료 전 기준별 상세 `criteria` 또는 `null`)를 포함한다. `criteria` 항목은 `{criterionId, area, label, points, verdict, reason, evidence, counterEvidence}`이고 근거는 인용 문자열만 담는다. 표시 문자열·반올림은 화면이 만든다. 미션 세션의 `note`는 평가와 노트가 모두 확정될 때까지 `NOTE_PENDING`을 반환한다.
+음성 `start`도 무료 비공개 시험 설정을 요구한다. 진행 대화의 음성/텍스트 방식이나 미션/자유 대화 여부가 요청과 다르면 `LEARNING_MODE_CONFLICT`로 거부하며 자동 전환하지 않는다. 알 수 없거나 유효하지 않은 미션은 `INVALID_MISSION`, `scenario`와 `mission`을 함께 보내거나 형식이 틀리거나 `timeZone`을 런타임이 모르면 `INVALID_REQUEST`다. 조회 응답 최상위의 `achievementDayCount`는 달성 일수로 인정된 서로 다른 날짜 수다([일수 인정](MISSIONS.md#일수-인정)). 조회 응답 최상위의 `missions`는 시작 가능한 미션의 공개 정보(`missionId`·제목·상황·역할·화면 목표·`routes[{routeId, label}]`)다. 조회의 세션 항목에는 `mission`(ID·버전·모드·수준·종료 사유·최종 경로 또는 `null`)과 `missionResult`(평가 상태·영역별/전체 반점 정수 원값·80% 여부·인정 날짜 `achievementDate`·만료 전 기준별 상세 `criteria` 또는 `null`)를 포함한다. `criteria` 항목은 `{criterionId, area, label, points, verdict, reason, evidence, counterEvidence}`이고 근거는 인용 문자열만 담는다. 표시 문자열·반올림은 화면이 만든다. 미션 세션의 `note`는 평가와 노트가 모두 확정될 때까지 `NOTE_PENDING`을 반환한다.
 
 `ConversationSnapshot`의 구조는 런타임 타입, 저장 JSON의 구형 키·해시 호환성은 [DB 저장 형식](DATABASE.md#저장-json과-이관-호환성), 저장·재시도·종료 순서는 [학습 저장 설계](LEARNING-PERSISTENCE.md)를 따른다.
 

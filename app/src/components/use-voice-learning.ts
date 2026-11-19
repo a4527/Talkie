@@ -108,7 +108,7 @@ export function useVoiceLearning({ onEnded }: { onEnded: (learningSessionId: str
     try {
       await audio.open((pcm, rate) => current.port.sendAudio(pcm, rate));
       if (runtime.current !== current) return;
-      const session: StoredVoiceSession = await requestLearningAction(missionRequest ? { action: "start", mission: missionRequest } : { action: "start", scenario: "voice" });
+      const session: StoredVoiceSession = await requestLearningAction(missionRequest ? { action: "start", mission: missionRequest, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : { action: "start", scenario: "voice" });
       if (runtime.current !== current) {
         await requestLearningAction({ action: "pause", learningSessionId: session.learningSessionId, learningConnectionToken: session.learningConnectionToken }); return;
       }

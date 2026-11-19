@@ -5,13 +5,14 @@ import { buildVoiceNoteMarkdown } from "../voice/note";
 import { extractNote, NOTE_EXTRACTION_LIMITS, type ExtractionGenerate, type ExtractionRun } from "../voice/note-extraction";
 import { createGeminiExtractionGenerate } from "./voice-cascade";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { AppError } from "./config";
 import { DAY, dbNow, digest, token, withIdentity, type Identity } from "./auth";
 import { databases, type RecordsTransaction } from "./db";
 import { scheduledJobs, learningSessions, learningSessionNotes, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "./db/records-schema";
 import { evaluateMission, type AreaScores, type EvaluationRun } from "../mission/evaluation";
 import { currentMission, describeJudgements, listMissionCatalog, findMissionDefinition, findMissionRubric, toPublicMission, type LanguageLevel, type MissionMode, type MissionStartRequest, type PublicMission } from "../mission/definitions";
+import { achievementDateFor, DEFAULT_MISSION_TIME_ZONE } from "../mission/achievement";
 import { DEFAULT_NO_PROGRESS_THRESHOLD, findCompletedRoute } from "../mission/realtime";
 import { missionProgressRouteIds, resumeMissionProgress, validateMissionProgress, type MissionProgress, type MissionRouteEvent } from "../mission/progress";
 import { transcriptSessionStates, transcriptSaves } from "./db/transcripts-schema";
@@ -153,7 +154,7 @@ function publicMissionFromRow(row: MissionRow): PublicMission {
  * private voice path and fixes mission/version/mode/level at creation; resuming ignores the request
  * values and returns the stored ones. Mission and legacy free sessions never resume as each other.
  */
-export async function startLearning(loginSessionToken: string | undefined, demoScenario: string, missionRequest?: MissionStartRequest) {
+export async function startLearning(loginSessionToken: string | undefined, demoScenario: string, missionRequest?: MissionStartRequest, missionTimeZone = DEFAULT_MISSION_TIME_ZONE) {
   if (missionRequest && demoScenario !== "voice") throw new AppError("INVALID_REQUEST");
   const mission = missionRequest && currentMission(missionRequest.missionId);
   if (missionRequest && !mission) throw new AppError("INVALID_MISSION");
@@ -186,7 +187,7 @@ export async function startLearning(loginSessionToken: string | undefined, demoS
     if (mission && missionRequest) {
       // Same records transaction as the session row: an open session never exists without its fixed mission.
       await tx.insert(learningSessionMissions).values({ learningSessionId, userId: who.userId, missionId: mission.definition.missionId, definitionVersion: mission.definition.definitionVersion,
-        rubricVersion: mission.rubric.rubricVersion, missionMode: missionRequest.missionMode, languageLevel: missionRequest.languageLevel });
+        rubricVersion: mission.rubric.rubricVersion, missionMode: missionRequest.missionMode, languageLevel: missionRequest.languageLevel, missionTimeZone });
       fixedMission = toPublicMission(mission.definition, mission.rubric.rubricVersion, missionRequest);
     }
     await databases().transcripts.transaction(async temp => {
@@ -324,8 +325,12 @@ export async function storeMissionEvaluation(tx: RecordsTransaction, row: Learni
   if (!row.learningSessionEndedAt || !row.transcriptDeleteDeadlineAt || !await missionEvaluationPending(tx, row.learningSessionId)) return;
   const now = await dbNow(tx);
   if (row.transcriptDeleteDeadlineAt <= now) return;
+  // The achievement date is fixed here, from the end time and the zone fixed at start, and never recomputed (DEC-095).
+  const [mission] = await tx.select({ missionEndReason: learningSessionMissions.missionEndReason, missionTimeZone: learningSessionMissions.missionTimeZone })
+    .from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, row.learningSessionId));
+  const achievementDate = mission ? achievementDateFor({ meetsThreshold: run.score.meetsThreshold, missionEndReason: mission.missionEndReason, learningSessionEndedAt: row.learningSessionEndedAt, missionTimeZone: mission.missionTimeZone }) : null;
   await tx.update(learningMissionResults).set({ evaluationStatus: "ready", areaScores: run.score.areas, totalEarnedHalf: run.score.totalEarnedHalf, totalMaxHalf: run.score.totalMaxHalf,
-    meetsThreshold: run.score.meetsThreshold, evaluatedAt: now }).where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
+    meetsThreshold: run.score.meetsThreshold, evaluatedAt: now, achievementDate }).where(and(eq(learningMissionResults.learningSessionId, row.learningSessionId), eq(learningMissionResults.evaluationStatus, "pending")));
   await tx.insert(learningMissionResultDetails).values({ learningSessionId: row.learningSessionId, userId: row.userId, judgements: run.judgements,
     detailRetentionExpiresAt: new Date(row.learningSessionEndedAt.getTime() + NOTE_RETENTION_DAYS * DAY) }).onConflictDoNothing();
 }
@@ -420,7 +425,7 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
       mission: { missionId: learningSessionMissions.missionId, definitionVersion: learningSessionMissions.definitionVersion, rubricVersion: learningSessionMissions.rubricVersion,
         missionMode: learningSessionMissions.missionMode, languageLevel: learningSessionMissions.languageLevel, missionEndReason: learningSessionMissions.missionEndReason, finalRouteId: learningSessionMissions.finalRouteId },
       missionResult: { evaluationStatus: learningMissionResults.evaluationStatus, areaScores: learningMissionResults.areaScores, totalEarnedHalf: learningMissionResults.totalEarnedHalf,
-        totalMaxHalf: learningMissionResults.totalMaxHalf, meetsThreshold: learningMissionResults.meetsThreshold } })
+        totalMaxHalf: learningMissionResults.totalMaxHalf, meetsThreshold: learningMissionResults.meetsThreshold, achievementDate: learningMissionResults.achievementDate } })
       .from(learningSessions).leftJoin(learningSessionMissions, and(eq(learningSessionMissions.learningSessionId, learningSessions.learningSessionId), eq(learningSessionMissions.userId, who.userId)))
       .leftJoin(learningMissionResults, and(eq(learningMissionResults.learningSessionId, learningSessions.learningSessionId), eq(learningMissionResults.userId, who.userId)))
       .where(eq(learningSessions.userId, who.userId)).orderBy(desc(learningSessions.learningSessionStartedAt));
@@ -437,7 +442,10 @@ export async function listLearningRecords(loginSessionToken: string | undefined)
     });
     const saved = await tx.select().from(learningSessionNotes).where(and(eq(learningSessionNotes.userId, who.userId), sql`${learningSessionNotes.noteRetentionExpiresAt} > ${now}`))
       .orderBy(desc(learningSessionNotes.learningEndDateKst));
-    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
+    // Several credited missions on one local date count once (PRD 4.5).
+    const [days] = await tx.select({ count: sql<number>`count(distinct ${learningMissionResults.achievementDate})::int` }).from(learningMissionResults)
+      .where(and(eq(learningMissionResults.userId, who.userId), isNotNull(learningMissionResults.achievementDate)));
+    return { emailAddress: who.emailAddress, missions: listMissionCatalog(), achievementDayCount: days?.count ?? 0, sessions, notes: saved.map(n => ({ learningSessionId: n.learningSessionId, learningEndDateKst: n.learningEndDateKst, noteMarkdown: n.noteMarkdown })) };
   });
 }
 

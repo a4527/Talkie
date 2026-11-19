@@ -13,6 +13,7 @@ import { invalidateRestoredAuthentication, maintenance } from "../src/server/mai
 import { completeGoogleAuth, unlinkGoogle, type GoogleOAuthState } from "../src/server/google-auth";
 import { googleIdentities, learningSessionMissions, learningMissionResults, learningMissionResultDetails } from "../src/server/db/records-schema";
 import { currentMission } from "../src/mission/definitions";
+import { localDateIn } from "../src/mission/achievement";
 import type { ExtractionGenerate } from "../src/voice/note-extraction";
 import { priorLearningWindow } from "../src/voice/prior-learning";
 import { boundRecords } from "../src/learning/buffer";
@@ -487,7 +488,10 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       assert.equal((detail.judgements as unknown[]).length, 18);
       const records = await listLearningRecords(a.raw), listed = records.sessions[0];
       const { criteria, ...aggregate } = listed.missionResult!;
-      assert.deepEqual(aggregate, { evaluationStatus: "ready", areaScores: ready.areaScores, totalEarnedHalf: 187, totalMaxHalf: 200, meetsThreshold: true });
+      assert.deepEqual(aggregate, { evaluationStatus: "ready", areaScores: ready.areaScores, totalEarnedHalf: 187, totalMaxHalf: 200, meetsThreshold: true, achievementDate: ready.achievementDate });
+      const [endedRow] = await databases().records.select().from(learningSessions).where(eq(learningSessions.learningSessionId, a.s.learningSessionId));
+      assert.equal(ready.achievementDate, localDateIn(endedRow.learningSessionEndedAt!, "Asia/Seoul"), "A start without a zone falls back to Asia/Seoul");
+      assert.equal(records.achievementDayCount, 1);
       assert.ok(!JSON.stringify(aggregate).includes("remake it"), "The aggregate carries no learner text");
       // Details come with fixed labels/points in rubric order for the result screen.
       assert.deepEqual(criteria?.map(c => c.criterionId), [...rubric.goalCriteria, ...rubric.languageCriteria].map(c => c.criterionId));
@@ -579,6 +583,62 @@ describe("PostgreSQL authentication and isolated records", { concurrency: false 
       await completeLearningNote(interruptedCommit.raw, id, { generate: down, evaluate: evaluation });
       assert.equal((await result(id)).evaluationStatus, "ready");
       assert.equal(await sourceRows(id), 0);
+    } finally {
+      for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+  it("credits one achievement day per local end date in the start time zone, excluding resume expiry", async () => {
+    const oldTest = process.env.TALKIE_VOICE_TEST, oldFree = process.env.GEMINI_FREE_TIER_CONFIRMED, oldKey = process.env.GOOGLE_API_KEY;
+    process.env.TALKIE_VOICE_TEST = "gemini-free"; process.env.GEMINI_FREE_TIER_CONFIRMED = "true"; process.env.GOOGLE_API_KEY = "synthetic";
+    const { rubric } = currentMission("cafe-wrong-order")!, criteria = [...rubric.goalCriteria, ...rubric.languageCriteria];
+    const turns = [{ turnId: "a0", requestId: "a0", role: "assistant", text: "Hi, how can I help?" }, { turnId: "u1", requestId: "u1", role: "user", text: "My latte is wrong." },
+      { turnId: "a1", requestId: "u1", role: "assistant", text: "I can remake it in five minutes." }, { turnId: "u2", requestId: "u2", role: "user", text: "Yes, please remake it." }];
+    const note: ExtractionGenerate = async () => JSON.stringify({ contextItems: [], detailItems: [{ kind: "summary", text: "Cafe complaint", evidence: [{ turnId: "u1", role: "user", text: "My latte is wrong." }] }] });
+    const judge = (met: boolean): ExtractionGenerate => async () => JSON.stringify({ judgements: criteria.map(c => ({ criterionId: c.criterionId, counterEvidence: [], reason: "합성 판정",
+      ...(met ? { verdict: "met", evidence: [{ turnId: "u2", text: "please remake it" }] } : { verdict: "unmet", evidence: [] }) })) });
+    const mission = { missionId: "cafe-wrong-order", missionMode: "real" as const, languageLevel: "B1" as const };
+    const result = async (id: string) => (await databases().records.select().from(learningMissionResults).where(eq(learningMissionResults.learningSessionId, id)))[0];
+    // Ends the session at a fixed instant so the local date does not depend on when the test runs.
+    const finish = async (raw: string, s: { learningSessionId: string; learningConnectionToken: string }, endedAt: string, met: boolean) => {
+      await saveLearning(raw, s.learningSessionId, s.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns });
+      await endLearning(raw, s.learningSessionId, s.learningConnectionToken);
+      await databases().records.update(learningSessions).set({ learningSessionEndedAt: new Date(endedAt) }).where(eq(learningSessions.learningSessionId, s.learningSessionId));
+      await completeLearningNote(raw, s.learningSessionId, { generate: note, evaluate: judge(met) });
+      return result(s.learningSessionId);
+    };
+    try {
+      const raw = await login("days@example.test");
+      // The zone is fixed at start; a resume from another zone keeps it.
+      const first = await startLearning(raw, "voice", mission, "America/Los_Angeles");
+      await updateLearningHeartbeat(raw, first.learningSessionId, first.learningConnectionToken, true);
+      const resumed = await startLearning(raw, "voice", mission, "Asia/Seoul");
+      assert.equal(resumed.learningSessionId, first.learningSessionId);
+      const [fixed] = await databases().records.select().from(learningSessionMissions).where(eq(learningSessionMissions.learningSessionId, first.learningSessionId));
+      assert.equal(fixed.missionTimeZone, "America/Los_Angeles");
+      // 06:30Z is the previous evening in Los Angeles but the afternoon of the 19th in Seoul.
+      assert.equal((await finish(raw, resumed, "2026-11-19T06:30:00Z", true)).achievementDate, "2026-11-18");
+      const sameDay = await startLearning(raw, "voice", mission, "Asia/Seoul");
+      assert.equal((await finish(raw, sameDay, "2026-11-18T10:00:00Z", true)).achievementDate, "2026-11-18");
+      const below = await startLearning(raw, "voice", mission, "Asia/Seoul");
+      const unmet = await finish(raw, below, "2026-11-17T01:00:00Z", false);
+      assert.deepEqual([unmet.evaluationStatus, unmet.meetsThreshold, unmet.achievementDate], ["ready", false, null]);
+      const other = await startLearning(raw, "voice", mission, "Asia/Seoul");
+      assert.equal((await finish(raw, other, "2026-11-17T01:00:00Z", true)).achievementDate, "2026-11-17");
+      // A resume-expired mission is scored but never credits a day.
+      const idle = await startLearning(raw, "voice", mission, "Asia/Seoul");
+      await saveLearning(raw, idle.learningSessionId, idle.learningConnectionToken, 1, { learningState: "conversation", corrections: [], turns });
+      await databases().records.update(learningSessions).set({ learningSessionStatus: "interrupted", learningSessionInterruptedAt: new Date(Date.now() - 86_400_001) }).where(eq(learningSessions.learningSessionId, idle.learningSessionId));
+      await maintenance({ generate: note, evaluate: judge(true) });
+      await maintenance({ generate: note, evaluate: judge(true) });
+      const expired = await result(idle.learningSessionId);
+      assert.deepEqual([expired.evaluationStatus, expired.meetsThreshold, expired.achievementDate], ["ready", true, null]);
+      const records = await listLearningRecords(raw);
+      assert.equal(records.achievementDayCount, 2, "Two credited missions on 11-18 count once");
+      assert.deepEqual(records.sessions.map(s => s.missionResult?.achievementDate), [null, "2026-11-17", null, "2026-11-18", "2026-11-18"]);
+      await assert.rejects(databases().records.update(learningMissionResults).set({ achievementDate: "2026-11-17" }).where(eq(learningMissionResults.learningSessionId, below.learningSessionId)),
+        postgresFailure("23514", "learning_mission_result_achievement"), "Only a result at or above 80% can carry a date");
     } finally {
       for (const [key, value] of Object.entries({ TALKIE_VOICE_TEST: oldTest, GEMINI_FREE_TIER_CONFIRMED: oldFree, GOOGLE_API_KEY: oldKey })) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;

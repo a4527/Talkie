@@ -8,6 +8,7 @@ import { startLearning } from "../src/server/learning";
 import { resumeMissionProgress, validateMissionProgress } from "../src/mission/progress";
 import type { Turn } from "../src/learning/types";
 import { POST as learnPost } from "../src/app/api/learn/route";
+import { achievementDateFor, localDateIn, parseTimeZone } from "../src/mission/achievement";
 
 describe("mission registry", () => {
   it("has a valid cafe mission with the approved points", () => {
@@ -51,6 +52,25 @@ describe("mission registry", () => {
   });
 });
 
+describe("achievement day", () => {
+  it("accepts known IANA zones only and takes the local end date", () => {
+    expect(parseTimeZone("America/Los_Angeles")).toBe("America/Los_Angeles");
+    for (const bad of ["Mars/Olympus_Mons", "", "../etc", 9, null, "A".repeat(65)]) expect(parseTimeZone(bad)).toBeUndefined();
+    expect(localDateIn(new Date("2026-11-19T14:59:59Z"), "Asia/Seoul")).toBe("2026-11-19");
+    expect(localDateIn(new Date("2026-11-19T15:00:00Z"), "Asia/Seoul")).toBe("2026-11-20");
+    expect(localDateIn(new Date("2026-11-19T06:30:00Z"), "America/Los_Angeles")).toBe("2026-11-18");
+  });
+  it("credits only a confirmed 80% result that did not end by resume expiry", () => {
+    const base = { learningSessionEndedAt: new Date("2026-11-19T06:30:00Z"), missionTimeZone: "Asia/Seoul" };
+    expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "goal_completed" })).toBe("2026-11-19");
+    expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "no_progress_failed" })).toBe("2026-11-19");
+    expect(achievementDateFor({ ...base, meetsThreshold: true, missionEndReason: "resume_expired" })).toBeNull();
+    expect(achievementDateFor({ ...base, meetsThreshold: false, missionEndReason: "goal_completed" })).toBeNull();
+    expect(achievementDateFor({ ...base, meetsThreshold: null, missionEndReason: "goal_completed" })).toBeNull();
+    expect(achievementDateFor({ ...base, missionTimeZone: "Bogus/Zone", meetsThreshold: true, missionEndReason: "user_ended" })).toBe("2026-11-19");
+  });
+});
+
 describe("mission start route", () => {
   const request = (body: unknown) => new NextRequest("http://127.0.0.1:3000/api/learn", { method: "POST",
     headers: { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000", "Content-Type": "application/json", cookie: "talkie_session=synthetic-login" }, body: JSON.stringify(body) });
@@ -61,12 +81,16 @@ describe("mission start route", () => {
       conversationSnapshot: { turns: [], corrections: [], learningState: "conversation", hasConversationGaps: false }, mission: null });
     const mission = { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" };
     expect((await learnPost(request({ action: "start", mission }))).status).toBe(200);
-    expect(startLearning).toHaveBeenCalledWith("synthetic-login", "voice", mission);
+    expect(startLearning).toHaveBeenCalledWith("synthetic-login", "voice", mission, "Asia/Seoul");
+    expect((await learnPost(request({ action: "start", mission, timeZone: "America/Los_Angeles" }))).status).toBe(200);
+    expect(startLearning).toHaveBeenLastCalledWith("synthetic-login", "voice", mission, "America/Los_Angeles");
   });
   it("rejects a scenario with a mission and malformed missions without starting", async () => {
     vi.stubEnv("APP_ORIGIN", "http://127.0.0.1:3000");
     for (const body of [{ action: "start", scenario: "voice", mission: { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" } },
-      { action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "real" } }, { action: "start", mission: null }]) {
+      { action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "real" } }, { action: "start", mission: null },
+      { action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" }, timeZone: "Mars/Olympus_Mons" },
+      { action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "B1" }, timeZone: 9 }]) {
       const response = await learnPost(request(body));
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: "INVALID_REQUEST" });

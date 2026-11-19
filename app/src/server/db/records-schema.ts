@@ -71,6 +71,8 @@ export const learningSessionMissions = pgTable("learning_session_missions", {
   missionId: text("mission_id").notNull(), definitionVersion: integer("definition_version").notNull(), rubricVersion: integer("rubric_version").notNull(),
   missionMode: text("mission_mode").notNull(), languageLevel: text("language_level").notNull(),
   missionEndReason: text("mission_end_reason"), finalRouteId: text("final_route_id"),
+  /** Browser IANA time zone fixed at start; the achievement day is the end time's local date in it (DEC-095). */
+  missionTimeZone: text("mission_time_zone").notNull().default("Asia/Seoul"),
 }, t => [
   foreignKey({ name: "learning_mission_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
   index("learning_mission_user").on(t.userId),
@@ -89,6 +91,8 @@ export const learningMissionResults = pgTable("learning_mission_results", {
   learningSessionId: uuid("learning_session_id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
   evaluationStatus: text("evaluation_status").notNull(), areaScores: jsonb("area_scores"),
   totalEarnedHalf: integer("total_earned_half"), totalMaxHalf: integer("total_max_half"), meetsThreshold: boolean("meets_threshold"), evaluatedAt: time("evaluated_at"),
+  /** Local YYYY-MM-DD credited as an achievement day, written once with the evaluation and never recomputed (DEC-095). */
+  achievementDate: text("achievement_date"),
 }, t => [
   foreignKey({ name: "learning_mission_result_session_owner", columns: [t.learningSessionId, t.userId], foreignColumns: [learningSessions.learningSessionId, learningSessions.userId] }).onDelete("cascade"),
   index("learning_mission_result_user").on(t.userId),
@@ -96,6 +100,8 @@ export const learningMissionResults = pgTable("learning_mission_results", {
   check("learning_mission_result_scores", sql`(${t.evaluationStatus} = 'ready') = (${t.areaScores} is not null and ${t.totalEarnedHalf} is not null and ${t.totalMaxHalf} is not null and ${t.evaluatedAt} is not null)`),
   check("learning_mission_result_range", sql`${t.totalEarnedHalf} is null or (${t.totalEarnedHalf} >= 0 and ${t.totalEarnedHalf} <= ${t.totalMaxHalf})`),
   check("learning_mission_result_threshold", sql`${t.meetsThreshold} is null or (${t.evaluationStatus} = 'ready' and ${t.totalMaxHalf} > 0)`),
+  check("learning_mission_result_achievement", sql`${t.achievementDate} is null or (${t.meetsThreshold} is true and ${t.achievementDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')`),
+  index("learning_mission_result_user_achievement").on(t.userId, t.achievementDate).where(sql`${t.achievementDate} is not null`),
 ]);
 /** Per-criterion verdicts, reasons and short verified quotes; expire with the note (DEC-088). */
 export const learningMissionResultDetails = pgTable("learning_mission_result_details", {

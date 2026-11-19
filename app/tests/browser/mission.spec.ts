@@ -3,6 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 const catalog = [{ missionId: "cafe-wrong-order", title: "잘못 나온 카페 주문 해결", situation: "카페에서 따뜻한 디카페인 라테를 주문했는데 차가운 일반 라테가 나왔습니다.",
   learnerRole: "음료를 받은 손님", partnerRole: "카페 카운터 직원", goals: ["주문과 다른 점을 직원에게 알리기", "원하는 처리를 요청하기", "직원과 최종 처리에 합의하기"],
   routes: [{ routeId: "remake", label: "재제조" }, { routeId: "refund", label: "환불" }] }];
+// A non-Korean zone shows that the start request carries the browser zone and that screens never re-derive stored dates (DEC-095).
+test.use({ timezoneId: "America/Los_Angeles" });
 const empty = { turns: [], corrections: [], learningState: "conversation", hasConversationGaps: false };
 
 async function fakeMicrophone(page: Page) {
@@ -47,7 +49,7 @@ test("mission selection fixes mode and level in the start request and shows the 
   await expect(start).toBeDisabled();
   await page.getByRole("checkbox").check(); await start.click();
   await expect(page.getByText("대화 중", { exact: true })).toBeVisible();
-  expect(starts).toEqual([{ action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "A2" } }]);
+  expect(starts).toEqual([{ action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "real", languageLevel: "A2" }, timeZone: "America/Los_Angeles" }]);
   expect(setupTools).toEqual(["report_mission_state"]);
   const brief = page.getByRole("region", { name: "미션 정보" });
   await expect(brief).toContainText("실전"); await expect(brief).toContainText("직원과 최종 처리에 합의하기");
@@ -75,7 +77,7 @@ test("an open mission resumes with its stored mode and level", async ({ page }) 
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: /이어서 하기/ }).click();
   await expect.poll(() => starts.length).toBe(1);
-  expect(starts[0]).toEqual({ action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "C" } });
+  expect(starts[0]).toEqual({ action: "start", mission: { missionId: "cafe-wrong-order", missionMode: "practice", languageLevel: "C" }, timeZone: "America/Los_Angeles" });
 });
 
 test("the result page separates outcome, score, exclusions and criterion evidence", async ({ page }) => {
@@ -102,5 +104,24 @@ test("the result page separates outcome, score, exclusions and criterion evidenc
   await result.getByText("문법 항목별 근거").click();
   await expect(result.getByText("부분 충족")).toBeVisible();
   await expect(result.getByText("I ordered a decaf.")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("a credited mission shows its stored achievement date and home counts distinct days", async ({ page }) => {
+  const area = (earnedHalf: number, maxHalf: number) => ({ earnedHalf, maxHalf });
+  const session = (id: string, achievementDate: string | null, missionEndReason = "goal_completed") => ({ learningSessionId: id, learningSessionStatus: "ended", noteGenerationStatus: "ready", demoScenario: "voice",
+    learningSessionStartedAt: "2026-11-19T06:00:00.000Z", learningSessionEndedAt: "2026-11-19T06:30:00.000Z",
+    mission: { missionId: "cafe-wrong-order", definitionVersion: 1, rubricVersion: 1, missionMode: "real", languageLevel: "B1", missionEndReason, finalRouteId: missionEndReason === "goal_completed" ? "remake" : null },
+    missionResult: { evaluationStatus: "ready", areaScores: { goal: area(120, 120), grammar: area(20, 20), vocabulary: area(20, 20), organization: area(20, 20), interaction: area(20, 20) },
+      totalEarnedHalf: 200, totalMaxHalf: 200, meetsThreshold: true, achievementDate, criteria: null } });
+  await page.route("**/api/learn", route => route.fulfill({ json: { emailAddress: "learner@example.test", missions: catalog, notes: [], achievementDayCount: 2,
+    sessions: [session("credited", "2026-11-18"), session("expired", null, "resume_expired")] } }));
+  // The stored date is shown as-is, not re-derived from the browser's zone.
+  await page.goto("/results/credited");
+  await expect(page.getByRole("region", { name: "미션 결과" })).toContainText("11월 18일 (수) 달성 일수로 인정됐어요");
+  await page.goto("/results/expired");
+  await expect(page.getByRole("region", { name: "미션 결과" })).toContainText("재개 기한이 지나 자동으로 끝난 미션이라 달성 일수에는 포함하지 않아요");
+  await page.goto("/home");
+  await expect(page.getByLabel("학습 요약")).toContainText("2달성 일수");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

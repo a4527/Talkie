@@ -35,6 +35,7 @@ export default function Home() {
         </div>
       </section>
       <section className="stats" aria-label="학습 요약">
+        <div className="stat"><strong>{value.achievementDayCount}</strong><span>달성 일수</span></div>
         <div className="stat"><strong>{ended}</strong><span>마친 대화</span></div>
         <div className="stat"><strong>{days.length}</strong><span>노트가 있는 날</span></div>
         <div className="stat"><strong>{days[0] ? formatKoreanDate(days[0][0]) : "—"}</strong><span>마지막 학습</span></div>

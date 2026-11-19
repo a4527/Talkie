@@ -168,7 +168,7 @@ input[type=email] { font: inherit; font-size: 14px; padding: 12px 14px; border: 
 .start-card.resume { background: var(--green); border-color: var(--green); color: white; }
 .start-card.resume .eyebrow, .start-card.resume > p, .start-card.resume .hint { color: #d9e6c9; }
 .start-card.resume .primary { background: var(--accent); color: var(--green); }
-.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 40px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 40px; }
 .stat { display: grid; gap: 2px; padding: 20px 4px; }
 .stat + .stat { border-left: 1px solid var(--line); padding-left: 24px; }
 .stat strong { font-size: 24px; letter-spacing: -.8px; font-weight: 650; }
@@ -320,8 +320,10 @@ input[type=email] { font: inherit; font-size: 14px; padding: 12px 14px; border: 
   .mission-facts > div { grid-template-columns: 1fr; gap: 2px; }
   .auth-layout, .home-hero { grid-template-columns: 1fr; gap: 28px; padding: 26px 0 40px; }
   .auth-card, .note-article { padding: 22px; }
-  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat + .stat { padding-left: 12px; }
+  .stat:nth-child(odd) { border-left: 0; padding-left: 4px; }
+  .stat:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .stat strong { font-size: 16px; }
   .note-row { grid-template-columns: minmax(0, 1fr) auto; }
   .note-row > .note-date, .note-row .tile-arrow { display: none; }
